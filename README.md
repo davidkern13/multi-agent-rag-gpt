@@ -28,10 +28,6 @@ graph TD
     E -->|Stored in| G[(💾 ChromaDB<br/>insurance_summaries<br/>doc_type / section_title)]
     F -->|Stored in| H[(💾 ChromaDB<br/>insurance_hierarchical<br/>doc_type / section_title / parent_id)]
     
-    G --> J[📑 PDF Document<br/>data/data.pdf]
-    H --> J
-    I --> J
-    
     B -.->|Enhance with| K[⚙️ MCP Tools<br/>📊 Pandas Analysis<br/>Timeline/Validation/Prices]
     D -.->|Can invoke| K
     
@@ -51,7 +47,6 @@ graph TD
     style F fill:#a8edea,stroke:#333,stroke-width:2px
     style G fill:#ff9a9e,stroke:#333,stroke-width:2px
     style H fill:#ff9a9e,stroke:#333,stroke-width:2px
-    style J fill:#f093fb,stroke:#333,stroke-width:2px
     style K fill:#ffecd2,stroke:#333,stroke-width:2px
     style L fill:#a1c4fd,stroke:#333,stroke-width:2px
     style M fill:#fbc2eb,stroke:#333,stroke-width:2px
