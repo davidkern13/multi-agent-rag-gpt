@@ -1,6 +1,6 @@
 # 🚀 Multi-Agent RAG Retrieval System
 
-A production-grade multi-agent RAG system with hierarchical retrieval, interactive visualization, and comprehensive evaluation. Generic framework applicable to any document analysis domain.
+Multi-Agent RAG Retrieval System with hierarchical retrieval, interactive visualization, and comprehensive evaluation. Generic framework applicable to any document analysis domain.
 
 ## 🎯 Key Features
 
