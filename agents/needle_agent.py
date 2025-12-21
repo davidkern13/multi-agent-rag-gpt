@@ -1,9 +1,3 @@
-"""
-Needle Agent - Improved version with enhanced prompts for statistical queries
-Handles precise factual queries with better understanding of max/min questions
-"""
-
-
 class NeedleAgent:
     def __init__(self, retriever, llm, debug=False):
         self.retriever = retriever
@@ -95,16 +89,12 @@ If multiple values exist, compare them and provide the most accurate answer.
 """
 
     def answer(self, query: str):
-        # Check if this is a statistical query requiring more contexts
         is_statistical = self._is_statistical_query(query)
 
-        # Retrieve contexts - more for statistical queries
         retrieval_count = 20 if is_statistical else 15
         nodes = self.retriever.retrieve(query)
 
-        # Get more nodes if needed for statistical queries
         if is_statistical and len(nodes) < retrieval_count:
-            # Take what we have
             contexts = [n.get_content() for n in nodes]
         else:
             contexts = [n.get_content() for n in nodes[:retrieval_count]]
@@ -123,13 +113,10 @@ If multiple values exist, compare them and provide the most accurate answer.
                     f"📉 Applied lost-in-middle mitigation: kept {len(contexts)} contexts"
                 )
 
-        # Build context text
         context_text = "\n\n".join(contexts)
 
-        # Get specific instructions based on query type
         specific_instruction = self._get_query_instruction(query)
 
-        # Build enhanced prompt
         prompt = f"""You are a financial data analysis assistant specializing in trading data.
 
 {specific_instruction}
@@ -163,7 +150,6 @@ YOUR ANSWER:"""
             print(prompt)
             print("=" * 80 + "\n")
 
-        # Get response from LLM
         response = self.llm.complete(prompt)
 
         return response.text.strip(), contexts, response
@@ -173,10 +159,8 @@ YOUR ANSWER:"""
         Stream answer for real-time display
         Returns: generator of (text_chunk, contexts, is_final)
         """
-        # Check if this is a statistical query requiring more contexts
         is_statistical = self._is_statistical_query(query)
 
-        # Retrieve contexts
         retrieval_count = 20 if is_statistical else 15
         nodes = self.retriever.retrieve(query)
 
@@ -191,13 +175,10 @@ YOUR ANSWER:"""
             half = MAX_CTX // 2
             contexts = contexts[:half] + contexts[-half:]
 
-        # Build context text
         context_text = "\n\n".join(contexts)
 
-        # Get specific instructions
         specific_instruction = self._get_query_instruction(query)
 
-        # Build prompt
         prompt = f"""You are a financial data analysis assistant specializing in trading data.
 
 {specific_instruction}
@@ -214,7 +195,6 @@ GENERAL INSTRUCTIONS:
 
 YOUR ANSWER:"""
 
-        # Stream response from LLM
         response_stream = self.llm.stream_complete(prompt)
 
         full_text = ""
@@ -223,5 +203,4 @@ YOUR ANSWER:"""
             full_text += delta
             yield delta, contexts, False
 
-        # Final yield with complete response
         yield full_text, contexts, True

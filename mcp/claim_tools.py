@@ -55,7 +55,6 @@ def analyze_claim_timeline(text: str) -> Dict[str, object]:
 # -------------------------------------------------------------------
 def extract_price_range(text: str) -> Dict[str, float]:
     """Extract high and low prices from trading text."""
-    # Pattern for prices: $XXX.XX or XXX.XX
     price_pattern = r"\$?(\d+\.?\d*)"
     prices = [float(m) for m in re.findall(price_pattern, text)]
 
@@ -77,12 +76,10 @@ def analyze_trading_patterns(text: str) -> Dict[str, any]:
     Extracts structured data and performs statistical analysis.
     """
     try:
-        # Extract trading data patterns (date, price, volume, etc.)
         lines = text.split("\n")
         data_rows = []
 
         for line in lines:
-            # Look for lines with date and price info
             date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
             price_match = re.search(r"(\d+\.\d{2})", line)
 
@@ -94,12 +91,10 @@ def analyze_trading_patterns(text: str) -> Dict[str, any]:
         if not data_rows:
             return {"error": "No trading data found"}
 
-        # Create DataFrame
         df = pd.DataFrame(data_rows)
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
 
-        # Calculate statistics
         stats = {
             "total_days": len(df),
             "avg_price": round(df["price"].mean(), 2),
@@ -134,7 +129,6 @@ def calculate_moving_average(text: str, window: int = 5) -> Dict[str, any]:
     Calculate moving average of prices using Pandas.
     """
     try:
-        # Extract price data
         price_pattern = r"(\d+\.\d{2})"
         prices = [float(m) for m in re.findall(price_pattern, text)]
 
@@ -143,10 +137,8 @@ def calculate_moving_average(text: str, window: int = 5) -> Dict[str, any]:
                 "error": f"Not enough data points (need {window}, got {len(prices)})"
             }
 
-        # Create DataFrame
         df = pd.DataFrame({"price": prices})
 
-        # Calculate moving average
         df["ma"] = df["price"].rolling(window=window).mean()
 
         latest_ma = df["ma"].iloc[-1]

@@ -1,32 +1,38 @@
 class SummarizationAgent:
-    def __init__(self, summary_index):
-        self.query_engine = summary_index.as_query_engine()
+    def __init__(self, summary_retriever, llm):
+        self.llm = llm
+        self.retriever = summary_retriever
 
     def answer(self, query: str):
-        enhanced_query = (
-            f"{query}\n\nProvide a clear and concise summary in 2-3 sentences."
+        contexts = self.retriever.retrieve(query)
+        context_text = "\n\n".join(c.text for c in contexts)
+
+        prompt = (
+            f"{query}\n\n"
+            "Provide a clear and concise summary in 2-3 sentences.\n\n"
+            f"{context_text}"
         )
-        response = self.query_engine.query(enhanced_query)
-        return str(response)
+
+        response = self.llm.complete(prompt)
+        return response.text
 
     def answer_stream(self, query: str):
-        """
-        Stream summary response
-        Yields: (text_chunk, is_final)
-        """
-        enhanced_query = (
-            f"{query}\n\nProvide a clear and concise summary in 2-3 sentences."
+        contexts = self.retriever.retrieve(query)
+        context_text = "\n\n".join(c.text for c in contexts)
+
+        prompt = (
+            f"{query}\n\n"
+            "Provide a clear and concise summary in 2-3 sentences.\n\n"
+            f"{context_text}"
         )
 
-        # LlamaIndex query_engine doesn't support streaming directly
-        # So we get the full response and simulate streaming
-        response = self.query_engine.query(enhanced_query)
-        full_text = str(response)
+        response_stream = self.llm.stream_complete(prompt)
 
-        # Stream character by character for smooth effect
-        for i in range(0, len(full_text), 3):
-            chunk = full_text[i : i + 3]
-            yield chunk, False
+        full_text = ""
+        for chunk in response_stream:
+            delta = chunk.delta
+            if delta:
+                full_text += delta
+                yield delta, False
 
-        # Final yield
         yield full_text, True

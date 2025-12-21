@@ -14,7 +14,6 @@ def extract_token_info_from_response(response) -> dict:
     Returns:
         Dictionary with token counts and timing info
     """
-    # Try to get additional_kwargs which contains Ollama metadata
     metadata = {}
 
     if hasattr(response, "additional_kwargs"):
@@ -110,7 +109,6 @@ def format_token_report(token_data: dict) -> str:
     if "total_with_context" in token_data:
         lines.append(f"  • With Context:{token_data['total_with_context']:>6} tokens")
 
-    # Performance metrics
     if "tokens_per_second" in token_data and token_data["tokens_per_second"] > 0:
         lines.append("")
         lines.append("⚡ Performance:")

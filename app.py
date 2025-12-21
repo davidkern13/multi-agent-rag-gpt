@@ -1,14 +1,7 @@
-"""
-Trading Analysis - Container-based Layout
-"""
-
 import streamlit as st
-
-# Use REAL tokenizer from utils
 from core.tokenizer import analyze_token_usage, format_token_report
+from agents.cache_agent import CacheAgent
 
-
-# Page config
 st.set_page_config(
     layout="wide",
     page_title="Trading Analysis",
@@ -20,36 +13,63 @@ st.set_page_config(
     },
 )
 
-# Initialize session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "show_tokens" not in st.session_state:
     st.session_state.show_tokens = False
 if "pending_query" not in st.session_state:
     st.session_state.pending_query = None
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
 
-# Layout: Chat on left, Examples on right
+
+@st.cache_resource(show_spinner=False)
+def get_system():
+    from core.system_builder import build_system
+
+    return build_system("data/data.pdf")
+
+
+if "manager" not in st.session_state:
+    st.session_state.manager = get_system()
+
+if "cache_agent" not in st.session_state:
+    from llama_index.core import Settings
+
+    st.session_state.cache_agent = CacheAgent(
+        embed_model=Settings.embed_model, max_cache_size=50, similarity_threshold=0.8
+    )
+
 col1, col2 = st.columns([2.5, 1])
 
 with col1:
     st.markdown("💬 Chat")
 
-    # Chat container with fixed height
     chat_container = st.container(height=600)
 
     with chat_container:
-        # Display messages
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-
                 if "token_info" in msg and st.session_state.show_tokens:
                     st.caption(msg["token_info"])
 
-    # Chat input OUTSIDE container (always visible at bottom)
-    user_input = st.chat_input("Ask about trading data...")
+    user_input = st.chat_input(
+        (
+            "Processing..."
+            if st.session_state.is_processing
+            else "Ask about trading data..."
+        ),
+        disabled=st.session_state.is_processing,
+    )
 
-    # Handle input
+    st.markdown(
+        "<p style='text-align: center; color: #888; font-size: 0.85em; margin-top: 0.5rem;'>"
+        "⚠️ AI can make mistakes • Not financial advice • Educational purposes only"
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
     prompt = None
     if st.session_state.pending_query:
         prompt = st.session_state.pending_query
@@ -57,82 +77,107 @@ with col1:
     elif user_input:
         prompt = user_input
 
-    # Process prompt
     if prompt:
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.is_processing = True
 
-        # Generate response
-        with chat_container:
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        cached = st.session_state.cache_agent.get(prompt)
 
-            with st.chat_message("assistant"):
-                from core.system_builder import build_system
+        if cached:
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-                @st.cache_resource
-                def get_manager():
-                    return build_system("data/data.pdf")
+                with st.chat_message("assistant"):
+                    st.markdown(cached["response"])
 
-                manager = get_manager()
+                    similarity = cached.get("similarity", 1.0)
+                    if similarity == 1.0:
+                        st.caption("💾 Cached response (exact match)")
+                    else:
+                        st.caption(
+                            f"💾 Cached response (similar query: {similarity:.0%})"
+                        )
 
-                # Placeholders
-                status_placeholder = st.empty()
-                message_placeholder = st.empty()
+                    if st.session_state.show_tokens:
+                        st.caption(cached["token_info"])
 
-                full_response = ""
-                contexts = []
-                stream_started = False
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": cached["response"],
+                    "token_info": cached["token_info"],
+                }
+            )
+            st.session_state.is_processing = False
+            st.rerun()
 
-                # Show spinner
-                with status_placeholder:
-                    with st.spinner("🔄 Processing..."):
-                        st.caption("🧠 Routing to agent...")
-                        st.caption("📊 Retrieving contexts...")
-                        st.caption("🔍 Running AutoMerging...")
+        else:
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-                        # Stream response
-                        for delta, ctxs, is_final in manager.route_stream(prompt):
-                            if not is_final:
-                                if not stream_started:
-                                    status_placeholder.empty()
-                                    stream_started = True
+                with st.chat_message("assistant"):
+                    manager = st.session_state.manager
 
-                                full_response += delta
-                                message_placeholder.markdown(full_response + "▌")
-                            else:
-                                full_response = delta
-                                contexts = ctxs
+                    status_placeholder = st.empty()
+                    message_placeholder = st.empty()
 
-                # Final answer
-                status_placeholder.empty()
-                message_placeholder.markdown(full_response)
+                    full_response = ""
+                    contexts = []
+                    stream_started = False
 
-                # Tokens - use tokenizer.py functions!
-                if st.session_state.show_tokens:
+                    with status_placeholder:
+                        with st.spinner("🔄 Processing..."):
+                            st.caption("🧠 Routing to agent...")
+                            st.caption("📊 Retrieving contexts...")
+                            st.caption("🔍 Running AutoMerging...")
+
+                            for delta, ctxs, is_final in manager.route_stream(prompt):
+                                if not is_final:
+                                    if not stream_started:
+                                        status_placeholder.empty()
+                                        stream_started = True
+
+                                    full_response += delta
+                                    message_placeholder.markdown(full_response + "▌")
+                                else:
+                                    full_response = delta
+                                    contexts = ctxs
+
+                    status_placeholder.empty()
+                    message_placeholder.markdown(full_response)
+
+                    if st.session_state.show_tokens:
+                        token_data = analyze_token_usage(
+                            query=prompt,
+                            answer=full_response,
+                            contexts=contexts,
+                            response_obj=None,
+                        )
+                        st.caption(format_token_report(token_data))
+
                     token_data = analyze_token_usage(
-                        query=prompt,
-                        answer=full_response,
-                        contexts=contexts,
-                        response_obj=None,  # In streaming mode, will use approximation
+                        prompt, full_response, contexts, None
                     )
-                    st.caption(format_token_report(token_data))
+                    token_info = format_token_report(token_data)
 
-                # Save to messages
-                token_data = analyze_token_usage(prompt, full_response, contexts, None)
-                token_info = format_token_report(token_data)
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": full_response,
-                        "token_info": token_info,
-                    }
-                )
+                    st.session_state.cache_agent.put(
+                        prompt, full_response, contexts, token_info
+                    )
 
-        st.rerun()
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": full_response,
+                            "token_info": token_info,
+                        }
+                    )
+
+            st.session_state.is_processing = False
+            st.rerun()
 
 with col2:
-    # Statistical
     st.markdown("**📊 Statistical Queries**")
 
     for q in [
@@ -144,7 +189,6 @@ with col2:
             st.session_state.pending_query = q
             st.rerun()
 
-    # Date-specific
     st.markdown("**📅 Date-Specific**")
 
     for q in [
@@ -156,7 +200,6 @@ with col2:
             st.session_state.pending_query = q
             st.rerun()
 
-    # Analytical
     st.markdown("**📈 Analytical**")
 
     for q in [
@@ -170,13 +213,11 @@ with col2:
             st.session_state.pending_query = q
             st.rerun()
 
-# Sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
 
     st.session_state.show_tokens = st.checkbox(
-        "Show Token Usage",
-        value=st.session_state.show_tokens,
+        "Show Token Usage", value=st.session_state.show_tokens
     )
 
     st.divider()
@@ -193,4 +234,8 @@ with st.sidebar:
     st.caption("• MapReduce Summaries")
 
     st.divider()
-    st.caption("⚠️ Educational only")
+
+    stats = st.session_state.cache_agent.get_stats()
+    st.caption(f"💾 Cached: {stats['total_cached']}/{stats['max_size']}")
+    st.caption(f"🎯 Threshold: {stats['similarity_threshold']:.0%}")
+    st.caption(f"🧠 Method: {stats['method']}")

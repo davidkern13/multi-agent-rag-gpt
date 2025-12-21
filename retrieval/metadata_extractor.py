@@ -16,26 +16,19 @@ def extract_timestamp(text: str):
 
 def extract_entities_from_text(text: str, top_n: int = 10):
     """
-    Dynamically extract entities from text.
+    Dynamically extract entities from text with frequency counts.
 
     Args:
         text: Input text
         top_n: Number of top entities to return
 
     Returns:
-        List of extracted entities
+        List of tuples: [(entity, count), ...]
     """
-    # Extract potential entities:
-    # 1. Stock tickers (all caps, 1-5 letters)
     stock_tickers = re.findall(r"\b[A-Z]{1,5}\b", text)
 
-    # 2. Numbers with context (prices, percentages)
-    price_contexts = re.findall(r"\$[\d,]+\.?\d*|\d+\.?\d*%", text)
-
-    # 3. Capitalized words (potential names, organizations)
     capitalized = re.findall(r"\b[A-Z][a-z]+\b", text)
 
-    # 4. Common financial terms
     financial_terms = [
         "revenue",
         "profit",
@@ -65,10 +58,8 @@ def extract_entities_from_text(text: str, top_n: int = 10):
 
     found_terms = [term for term in financial_terms if term.lower() in text.lower()]
 
-    # Combine and count
     all_entities = stock_tickers + capitalized + found_terms
 
-    # Filter out common words
     stopwords = {
         "The",
         "This",
@@ -85,9 +76,23 @@ def extract_entities_from_text(text: str, top_n: int = 10):
     }
     filtered = [e for e in all_entities if e not in stopwords and len(e) > 1]
 
-    # Get most common
     counter = Counter(filtered)
-    return [entity for entity, count in counter.most_common(top_n)]
+    return counter.most_common(top_n)
+
+
+def extract_price_contexts(text: str, max_prices: int = 5):
+    """
+    Extract price and percentage values from text.
+
+    Args:
+        text: Input text
+        max_prices: Maximum number of prices to return
+
+    Returns:
+        List of price strings (e.g., [])
+    """
+    price_contexts = re.findall(r"\$[\d,]+\.?\d*|\d+\.?\d*%", text)
+    return price_contexts[:max_prices]
 
 
 def extract_entities(text: str):
@@ -104,7 +109,6 @@ def extract_doc_type(text: str) -> str:
     """
     text_lower = text.lower()
 
-    # Check for different document types
     if any(
         term in text_lower for term in ["ohlcv", "trading", "daily", "stock", "ticker"]
     ):
@@ -125,14 +129,11 @@ def extract_section_title(text: str) -> str:
     """
     lines = text.strip().splitlines()
     for line in lines:
-        # Look for lines that might be titles (short, capitalized)
         line = line.strip()
         if line and len(line) < 100:
-            # Check if it looks like a title
             if line.isupper() or (line[0].isupper() and line.count(".") < 2):
                 return line
 
-    # Fallback: return first non-empty line
     for line in lines:
         if line.strip():
             return line.strip()[:100]
@@ -145,12 +146,13 @@ def extract_metadata_summary(text: str) -> dict:
     Extract comprehensive metadata from text.
 
     Returns:
-        Dictionary with all extracted metadata
+        Dictionary with all extracted metadata including prices
     """
     return {
         "doc_type": extract_doc_type(text),
         "timestamp": extract_timestamp(text),
         "entities": extract_entities_from_text(text, top_n=10),
+        "prices": extract_price_contexts(text, max_prices=5),
         "section_title": extract_section_title(text),
         "text_length": len(text),
         "has_financial_data": any(

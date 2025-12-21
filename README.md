@@ -1,15 +1,15 @@
 # 🚀 Multi-Agent RAG Retrieval System
 
-Multi-Agent RAG Retrieval System with hierarchical retrieval, interactive visualization, and comprehensive evaluation. Generic framework applicable to any document analysis domain.
+Multi-Agent RAG Retrieval System with hierarchical retrieval, MapReduce summary index, and comprehensive evaluation. Generic framework applicable to any document analysis domain.
 
 ## 🎯 Key Features
 
 - **Multi-Agent Architecture**: Manager, Needle, and Summary agents with intelligent routing
-- **Hierarchical Retrieval**: 3-level auto-merging chunks (256/512/1024 tokens)
-- **Interactive UI**: Streamlit chat interface with live TradingView-style charts
-- **Flexible Storage**: ChromaDB
-- **Statistical Tools**: Deterministic calculations with optional ReAct agent pattern
-- **LLM-as-Judge**: Comprehensive evaluation framework
+- **Hierarchical Retrieval**: 3-level auto-merging chunks (128/256/512 tokens)
+- **MapReduce Summary Index**: Section and document-level summaries with top_k retrieval
+- **Flexible Storage**: ChromaDB for persistent vector storage
+- **Keyword-based Routing**: Fast and reliable query classification
+- **LLM-as-Judge**: Custom evaluation framework
 - **MCP Integration**: Model Context Protocol for extended capabilities
 
 ## System Architecture
@@ -17,28 +17,28 @@ Multi-Agent RAG Retrieval System with hierarchical retrieval, interactive visual
 ```mermaid
 graph TD
     UI[🎨 Streamlit UI<br/>Chat Interface] -->|User Query| A[👤 User Input]
-    A -->|Question| B[🧠 Manager Agent]
+    A -->|Question| B[🧠 Manager Agent<br/>Keyword Routing]
     
     B -->|High-level?| C[📋 Summarization Agent]
     B -->|Specific fact?| D[🔍 Needle Agent]
     
-    C -->|Retrieves from| E[📄 Summary Index]
-    D -->|Retrieves from| F[🌳 Hierarchical Index]
+    C -->|Retrieves from| E[📄 Summary Index<br/>VectorStore + MapReduce<br/>top_k=5]
+    D -->|Retrieves from| F[🌳 Hierarchical Index<br/>AutoMerging 128/256/512<br/>top_k=40]
     
-    E -->|Stored in| G[(💾 ChromaDB<br/>insurance_summaries<br/>doc_type / section_title)]
-    F -->|Stored in| H[(💾 ChromaDB<br/>insurance_hierarchical<br/>doc_type / section_title / parent_id)]
+    E -->|Stored in| G[(💾 ChromaDB<br/>insurance_summaries<br/>chunks + sections + docs)]
+    F -->|Stored in| H[(💾 ChromaDB<br/>insurance_hierarchical<br/>parent-child nodes)]
     
     G --> J[📑 PDF Document<br/>data/data.pdf]
     H --> J
     
-    B -.->|Enhance with| K[⚙️ MCP Tools<br/>📊 Pandas Analysis<br/>Timeline/Validation/Prices]
+    B -.->|Enhance with| K[⚙️ MCP Tools<br/>📊 Pandas Analysis]
     D -.->|Can invoke| K
     
     D -->|Response| L[🔢 Tokenizer<br/>Count tokens]
     C -->|Response| L
     L -->|Token metrics| UI
     
-    M[📈 Ragas Evaluation<br/>Faithfulness/Relevancy] -.->|Evaluate| D
+    M[📈 LLM-as-Judge<br/>Custom Evaluation] -.->|Evaluate| D
     M -.->|Evaluate| C
     
     style UI fill:#667eea,stroke:#333,stroke-width:3px,color:#fff
@@ -56,13 +56,6 @@ graph TD
     style M fill:#fbc2eb,stroke:#333,stroke-width:2px
 ```
 
-## 📊 Interactive Visualization
-
-Full-year **TradingView-style charts** with:
-- Candlestick patterns with volume bars
-- Dynamic markers on query-relevant data points
-- Real-time highlighting based on chat queries
-
 ## Component Overview
 
 ### 🎨 Streamlit UI
@@ -70,33 +63,40 @@ Full-year **TradingView-style charts** with:
 - **Features**:
   - Real-time chat with message history
   - Token usage visualization
-  - Example query buttons
+  - Example query buttons (statistical, date-specific, analytical)
   - Settings sidebar
 - **Technology**: Streamlit web framework
 
 ### 🧠 Manager Agent (Router)
 - **Purpose**: Routes queries to the appropriate specialized agent
-- **Logic**: 
-  - Keywords like "overview", "high-level" → Summarization Agent
-  - Specific factual queries → Needle Agent
+- **Routing Strategy**: Keyword-based classification
+  - Keywords: "overview", "summarize", "summary", "trend", "general", "overall", "broad"
+  - Summary queries → Summarization Agent
+  - All other queries → Needle Agent (default)
+- **Benefits**: Fast, reliable, no LLM overhead
 - **Additional**: Invokes MCP tools when needed
 
 ### 🔍 Needle Agent
 - **Purpose**: Handles precise factual queries ("needle in haystack")
 - **Uses**: Hierarchical Index with Auto-Merging Retriever
+- **Retriever**: Pre-built with `top_k=40`
 - **Features**:
   - Vector similarity search
-  - Retrieves small chunks (256 tokens)
-  - Auto-merges to parent nodes when needed
-  - Lost-in-the-middle mitigation (keeps first 3 + last 3)
+  - Retrieves small chunks (128 tokens)
+  - Auto-merges to parent nodes (256→512) when needed
+  - Lost-in-the-middle mitigation (keeps first half + last half)
+  - Statistical query detection for "highest", "lowest", "average"
+  - Specialized prompts for max/min/average queries
 
 ### 📋 Summarization Agent
 - **Purpose**: Answers high-level overview questions
-- **Uses**: Summary Index
+- **Uses**: VectorStoreIndex with MapReduce structure
+- **Retriever**: Built with `top_k=5` (only 5 most relevant contexts)
 - **Features**:
-  - Processes all documents
-  - No vector search needed
-  - Fast document-level summaries
+  - Fast retrieval (cached in ChromaDB)
+  - MapReduce nodes: leaf chunks + section summaries + document summaries
+  - LLM condenses contexts to 2-3 sentences
+  - Optimized for "trend", "overview", "general" queries
 
 ### 🔢 Tokenizer 
 - **Purpose**: Tracks and reports token usage
@@ -109,58 +109,84 @@ Full-year **TradingView-style charts** with:
 
 ## Data Management & Indexing
 
-### 📚 Hierarchical Index
+### 📚 Hierarchical Index (Needle Agent)
 
 **Chunking Strategy:**
 ```
-Large (1024 tokens)
-  └── Medium (512 tokens)
-        └── Small (256 tokens)
+Large (512 tokens, overlap=20)
+  └── Medium (256 tokens, overlap=20)
+        └── Small (128 tokens, overlap=20)
 ```
 
 **Rationale:**
-- **1024**: Broad context for document-level understanding
-- **512**: Balanced granularity for section-level retrieval
-- **256**: Fine-grained for precise fact extraction
+- **512**: Broad context for document-level understanding
+- **256**: Balanced granularity for section-level retrieval
+- **128**: Fine-grained for precise fact extraction (optimized for "needle in haystack")
 
-**Overlap:** 4 tokens between chunks to preserve context continuity
+**Overlap:** 20 tokens between chunks to preserve context continuity
 
 **Why Auto-Merging?**
-- Starts with precise small chunks
+- Starts with precise small chunks (128 tokens)
 - Automatically merges to parent when more context needed
 - Prevents information fragmentation
+- Optimal for statistical queries requiring comparison across data points
 
-### 📄 Summary Index
+**Top-k:** Set to 40 at index build time for comprehensive retrieval
 
-- Stores entire documents with metadata
-- No chunking or vector search
-- Direct LLM processing for overviews
-- Metadata includes: doc_type, timestamp, entities
+### 📄 Summary Index (Summarization Agent)
+
+**Chunking Strategy:**
+```
+Chunks: 512 tokens, overlap=4
+```
+
+**MapReduce Structure:**
+1. **Leaf chunks** (512 tokens) - Original text segments
+2. **Section summaries** - Groups of 5 chunks combined
+3. **Document summaries** - First 3 chunks of each document
+
+**How it works:**
+1. Documents split into 512-token chunks during indexing
+2. Section summaries created by combining chunks
+3. Document summaries from first chunks
+4. All stored as nodes in VectorStoreIndex
+5. At query time, retrieves top 5 most relevant nodes (top_k=5)
+6. SummarizationAgent condenses to 2-3 sentences
+
+**Benefits:**
+- **Fast**: Pre-built summaries, no real-time generation
+- **Cached**: Stored in ChromaDB, loaded instantly
+- **Concise**: top_k=5 limits context, LLM produces 2-3 sentences
+- **Scalable**: Works well even with large documents
+
+**Metadata:** doc_type, timestamp, entities (JSON string)
 
 ## Storage Layer
 
 ### 💾 ChromaDB (Vector Store)
 ```
 ./chroma_storage/
-  ├── insurance_hierarchical  (for Needle Agent)
-  └── insurance_summaries     (for Summarization Agent)
+  ├── insurance_hierarchical  (Needle: 128/256/512 chunks)
+  └── insurance_summaries     (Summary: MapReduce nodes)
 ```
 
 **Why ChromaDB?**
 - Persistent vector storage
 - Fast similarity search
 - Supports multiple collections
+- Easy integration with LlamaIndex
 
 ### 📦 Docstore
 ```
-./storage/           (Hierarchical docstore)
-./storage_summary/   (Summary docstore)
+./docstore_hierarchical/   (Hierarchical node structure with parent-child)
+./docstore_summary/        (Summary nodes with MapReduce structure)
 ```
 
 **Stores:**
 - Parent nodes for hierarchical structure
 - Document metadata
 - Node relationships
+- Section and document summaries
 
 ## MCP Integration
 
@@ -205,110 +231,111 @@ calculate_moving_average(text, window=5)
 
 ## 🎯 Evaluation Methodology
 
-### Dual Evaluation System
+### Custom LLM-as-a-Judge
 
-**1. Custom LLM-as-a-Judge**
+Evaluates three key metrics matching assignment requirements:
 
-Evaluates three key metrics:
+**A. Answer Correctness (0-5)**
+- Compares answer to ground truth
+- Evaluates factual accuracy
+- Checks for matched facts vs missed facts
+- Uses separate LLM for unbiased scoring
 
-- **Answer Correctness (0-10)**
-  - Compares answer to ground truth
-  - Evaluates factual accuracy
-  - Uses separate LLM for unbiased scoring
+**B. Context Relevancy (0-5)**
+- Measures if retrieved contexts match query
+- Ensures retrieval quality
+- Validates semantic alignment
+- Counts relevant vs irrelevant contexts
 
-- **Context Relevancy (0-10)**
-  - Measures if retrieved contexts match query
-  - Ensures retrieval quality
-  - Validates semantic alignment
+**C. Context Recall (0-5)**
+- Checks if ground truth info exists in contexts
+- Validates retrieval completeness
+- Measures information coverage
+- Verifies expected chunks are present
 
-- **Context Recall (0-10)**
-  - Checks if ground truth info exists in contexts
-  - Validates retrieval completeness
-  - Measures information coverage
-
-**2. Ragas Framework**
-
-Professional RAG evaluation with:
-
-- **Faithfulness**: Is answer faithful to context?
-- **Answer Relevancy**: Is answer relevant to question?
-- **Context Recall**: Is ground truth in context?
-- **Context Precision**: Is context relevant and precise?
-
-**Benefits of Dual Evaluation:**
-- Cross-validation between two evaluation methods
-- Custom judge provides interpretable 0-10 scores
-- Ragas provides industry-standard metrics (0-1)
-- Comprehensive quality assessment
+**Scoring:**
+- Each metric: 0-5 points
+- Overall score: Sum of 3 metrics (0-15)
+- Final percentage: (overall/15) × 100
 
 **Test Suite:** 8 queries covering:
-- Needle queries (specific facts)
-- Summary queries (high-level)
-- MCP-enhanced queries (timeline/validation/analysis)
+- Needle queries (specific facts, dates)
+- Statistical queries (highest, lowest, average)
+- Comparison queries (first week vs last week)
+- Summary queries (overview, trends)
+
+**Output:** `evaluation_results.json` with detailed scores and statistics
 
 ## Example Queries & Routing
 
-| Query | Agent | Index | MCP |
-|-------|-------|-------|-----|
-| "What was the highest % increase?" | Needle | Hierarchical | ❌ |
-| "Give high-level overview" | Summary | Summary | ❌ |
-| "Timeline duration?" | Needle | Hierarchical | ✅ Timeline |
-| "List missing documents" | Needle | Hierarchical | ✅ Validation |
-
-## Limitations & Trade-offs
+| Query | Agent | Index | Top-k | Routing Reason |
+|-------|-------|-------|-------|----------------|
+| "What was the highest % increase?" | Needle | Hierarchical | 40 | No summary keyword |
+| "Summarize November trend" | Summary | VectorStore + MapReduce | 5 | Keywords: "summarize", "trend" |
+| "What happened on Nov 5?" | Needle | Hierarchical | 40 | Specific date query |
+| "Give me an overview" | Summary | VectorStore + MapReduce | 5 | Keyword: "overview" |
+| "Average closing price?" | Needle | Hierarchical | 40 | Statistical query |
 
 ## ⚡ Performance Optimization
 
 ### Persistent Storage
-The system now uses **true persistence** for both indexes and docstores:
+The system uses **true persistence** for both indexes and docstores:
 
 **Storage Structure:**
 ```
 ./chroma_storage/              # Vector embeddings (ChromaDB)
-  ├── insurance_hierarchical
-  └── insurance_summaries
+  ├── insurance_hierarchical   # Needle: 128/256/512 chunks
+  └── insurance_summaries      # Summary: MapReduce nodes (512 chunks + sections + docs)
 ./docstore_hierarchical/       # Hierarchical node structure
-./docstore_summary/           # Summary documents
+./docstore_summary/            # Summary nodes with MapReduce
 ```
 
 **Benefits:**
-- ✅ **First run**: Builds indexes (~30-60 seconds for typical documents)
+- ✅ **First run**: Builds indexes (~30-60 seconds)
 - ✅ **Subsequent runs**: Loads from disk (~1-2 seconds) - **30x faster!**
 - ✅ **No re-chunking**: Preserves exact node hierarchy
+- ✅ **No re-summarization**: MapReduce structure cached
 - ✅ **Consistent results**: Same chunks every time
 
 **Cache Management:**
 ```bash
 # Clear cache and force rebuild
 python clear_cache.py
+
+# Or manually:
+rm -rf chroma_storage docstore_summary docstore_hierarchical
 ```
 
 ## Limitations & Trade-offs
 
 ### Current Limitations:
 1. **Single PDF support** - No multi-document handling
-2. **Fixed chunk sizes** - Not adaptive to content type
+2. **Fixed chunk sizes** - Not adaptive to content type (128/256/512 for hierarchical, 512 for summary)
 3. **Cache invalidation** - Manual clearing required if source changes
+4. **Keyword routing** - Simple keyword matching, no semantic understanding
 
 ### Design Trade-offs:
-1. **Disk space vs Speed** - Uses ~50-100MB for cached indexes
+1. **Disk space vs Speed** - Uses ~50-100MB for cached indexes + MapReduce nodes
 2. **Auto-merging overhead** - Better context vs slower retrieval
-3. **MCP complexity** - More capabilities vs maintenance burden
+3. **Summary accuracy vs speed** - top_k=5 is fast but may miss details
+4. **Keyword routing vs LLM routing** - Faster and reliable but less flexible
+5. **VectorStoreIndex vs DocumentSummaryIndex** - Cache support vs auto-generated summaries
 
 ### Future Improvements:
 - [ ] Automatic cache invalidation (detect source changes)
 - [ ] Multi-document support with document-level caching
 - [ ] Adaptive chunking based on content type
-- [ ] Streaming responses for long queries
+- [ ] Optional LLM-based routing with fallback to keywords
 - [ ] More sophisticated MCP tools
+- [ ] Hybrid retrieval (BM25 + vector search)
 
 ## 🚀 Installation
 
 ### Prerequisites
 - Python 3.10+
 - Ollama running locally with models:
-  - `llama3.2:3b` (LLM)
-  - `mxbai-embed-large` (embeddings)
+  - `gemma3:4b` (LLM for responses)
+  - `mxbai-embed-large` (embeddings for vector search)
 
 ### Setup
 
@@ -322,77 +349,83 @@ pip install -r requirements.txt
 
 # Ensure Ollama is running
 ollama serve
+
+# Pull required models
+ollama pull gemma3:4b
+ollama pull mxbai-embed-large
 ```
 
 ### Run Options
 
-**1. Download data**
+**1. Generate Sample Data**
 ```bash
 python generator/report.py
 ```
 
-**1. Streamlit UI (Interactive Chat)**
+**2. Streamlit UI (Interactive Chat)**
 ```bash
 streamlit run app.py
 ```
 Opens browser at `http://localhost:8501` with chat interface
 
-Runs predefined queries in terminal
-
-**2. Evaluation**
+**3. Evaluation**
 ```bash
-set PYTHONPATH=%CD% && python evaluation/run_evaluation.py
+# Windows
+set PYTHONPATH=%CD%
+python evaluation\run_evaluation.py
+
+# Linux/Mac
+export PYTHONPATH=$(pwd)
+python evaluation/run_evaluation.py
 ```
-Runs dual evaluation (Custom + Ragas) on test suite
+Runs custom LLM-as-a-judge evaluation on test suite
 
 ## 📁 Project Structure
 ```
 .
-├── app.py                          # Main Streamlit UI with charts
+├── app.py                          # Main Streamlit UI
 ├── agents/
-│   ├── manager_agent.py            # Router
-│   ├── needle_agent.py             # Precise queries + statistical tools
-│   └── summarization_agent.py      # High-level summaries
+│   ├── manager_agent.py            # Router with keyword classification
+│   ├── needle_agent.py             # Precise queries (top_k=40)
+│   └── summarization_agent.py      # High-level summaries (top_k=5)
 ├── core/
 │   ├── embeddings.py               # Embedding model config
 │   ├── llm_provider.py             # LLM config (temperature=0)
 │   ├── tokenizer.py                # Token counting
 │   └── system_builder.py           # System orchestrator
 ├── retrieval/
-│   ├── hierarchical_retrieval.py   # 3-level auto-merging
-│   ├── summary_retrieval.py        # Document-level index
+│   ├── hierarchical_retrieval.py   # 3-level auto-merging (128/256/512)
+│   ├── summary_retrieval.py        # VectorStoreIndex + MapReduce
 │   └── metadata_extractor.py       # Metadata extraction
 ├── ingestion/
 │   ├── indexing.py                 # Index builder
+│   ├── chunking.py                 # Hierarchical chunking (128/256/512, overlap=20)
 │   └── loader.py                   # PDF loader
 ├── generator/
 │   └── report.py                   # Sample data generation
 ├── mcp/
 │   ├── claim_mcp.py                # MCP orchestrator
-│   └── claim_tools.py              # MCP tools
+│   └── claim_tools.py              # MCP tools (Pandas analysis)
 ├── evaluation/
-│   ├── judge.py                    # LLM-as-a-judge
-│   ├── test_cases.py               # Test suite
-│   └── run_evaluation.py           # Evaluation runner
+│   ├── run_evaluation.py           # LLM-as-a-judge evaluation
+│   └── (test cases embedded)       # 8 test queries
 ├── data/
 │   └── data.pdf                    # Source document
 └── README.md                       # This file
 ```
 
- ## 🔬 Technologies
+## 🔬 Technologies
 
 - **LlamaIndex**: Indexing & retrieval framework
 - **ChromaDB**: Persistent vector database
-- **Ollama**: Local LLM & embeddings (llama3.2:3b, mxbai-embed-large)
-- **Streamlit**:  Interactive UI
-- **Ragas**: Professional RAG evaluation framework
-- **Pandas**: Trading pattern analysis in MCP tools
+- **Ollama**: Local LLM & embeddings (gemma3:4b, mxbai-embed-large)
 - **Streamlit**: Interactive web UI for chat interface
+- **Pandas**: Trading pattern analysis in MCP tools
 - **PyMuPDF**: PDF document parsing
 - **Python 3.10+**: Core programming language
 
 ---
 
-**Author:** David Kern
+**Author:** David Kern  
 **Course:** GenAI + Agents  
 **Date:** December 2025

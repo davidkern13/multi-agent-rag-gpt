@@ -1,3 +1,6 @@
+from typing import List
+from langchain_core.tools import Tool
+import json
 from mcp.claim_tools import (
     analyze_claim_timeline,
     validate_required_documents,
@@ -7,64 +10,115 @@ from mcp.claim_tools import (
 )
 
 
+def timeline_tool(text: str) -> str:
+    result = analyze_claim_timeline(text)
+    return json.dumps(
+        {
+            "dates_found": len(result["dates_found"]),
+            "duration_days": result["claim_duration_days"],
+            "first_date": result["dates_found"][0] if result["dates_found"] else None,
+            "last_date": result["dates_found"][-1] if result["dates_found"] else None,
+        }
+    )
+
+
+def validation_tool(text: str) -> str:
+    result = validate_required_documents(
+        text, ["OHLCV data", "price", "volume", "date"]
+    )
+    missing = [k for k, v in result.items() if not v]
+    return json.dumps({"missing_fields": missing, "all_present": len(missing) == 0})
+
+
+def price_range_tool(text: str) -> str:
+    result = extract_price_range(text)
+    return json.dumps(
+        {
+            "high": result["high"],
+            "low": result["low"],
+            "range": (
+                result["high"] - result["low"]
+                if result["high"] and result["low"]
+                else None
+            ),
+        }
+    )
+
+
+def patterns_tool(text: str) -> str:
+    result = analyze_trading_patterns(text)
+    if "error" in result:
+        return json.dumps({"error": result["error"]})
+    return json.dumps(
+        {
+            "avg_price": result["avg_price"],
+            "volatility": result["price_volatility"],
+            "price_change_pct": result["price_change_pct"],
+            "max_price": result["max_price"],
+            "min_price": result["min_price"],
+        }
+    )
+
+
+def moving_average_tool(text: str) -> str:
+    result = calculate_moving_average(text, window=5)
+    if "error" in result:
+        return json.dumps({"error": result["error"]})
+    return json.dumps(
+        {
+            "latest_price": result["latest_price"],
+            "moving_average": result["moving_average"],
+            "signal": "BULLISH" if result["above_ma"] else "BEARISH",
+        }
+    )
+
+
 class ClaimMCP:
-    """
-    MCP wrapper that extends LLM capabilities with structured tools.
-    Now includes Pandas-powered trading analysis!
-    """
+    def __init__(self):
+        self.tools = [
+            Tool(
+                name="GetTimeline",
+                func=timeline_tool,
+                description="Extract timeline dates and calculate duration from trading data text",
+            ),
+            Tool(
+                name="ValidateData",
+                func=validation_tool,
+                description="Check if required trading data fields (OHLCV, price, volume, date) are present",
+            ),
+            Tool(
+                name="GetPriceRange",
+                func=price_range_tool,
+                description="Extract high and low prices from trading data",
+            ),
+            Tool(
+                name="AnalyzePatterns",
+                func=patterns_tool,
+                description="Calculate trading statistics: average price, volatility, price changes",
+            ),
+            Tool(
+                name="CalculateMA",
+                func=moving_average_tool,
+                description="Calculate 5-day moving average and determine bullish/bearish signal",
+            ),
+        ]
 
-    def run(self, query: str, contexts: list[str]) -> str | None:
-        q = query.lower()
+    def get_tools(self) -> List[Tool]:
+        return self.tools
+
+    def run(self, query: str, contexts: list[str]):
         text = "\n".join(contexts)
+        q = query.lower()
 
-        # Timeline analysis
-        if "timeline" in q or "duration" in q or "how long" in q:
-            result = analyze_claim_timeline(text)
-            if result["claim_duration_days"] != -1:
-                dates = result["dates_found"]
-                duration = result["claim_duration_days"]
-                return f"Timeline Analysis: Found {len(dates)} dates spanning {duration} days (from {dates[0] if dates else 'N/A'} to {dates[-1] if dates else 'N/A'})"
-
-        # Data validation (for trading data)
-        if "missing" in q or "required" in q or "validation" in q:
-            result = validate_required_documents(
-                text,
-                ["OHLCV data", "price", "volume", "date"],
-            )
-            missing = [doc for doc, found in result.items() if not found]
-            if missing:
-                return f"Missing Data Fields: {', '.join(missing)}"
-            else:
-                return "All required trading data fields are present"
-
-        # Price range extraction
-        if "price range" in q or ("high" in q and "low" in q):
-            result = extract_price_range(text)
-            if result["high"] and result["low"]:
-                return f"Price Range: Low ${result['low']}, High ${result['high']}"
-
-        # Trading pattern analysis with Pandas
-        if "pattern" in q or "statistics" in q or "volatility" in q or "analysis" in q:
-            result = analyze_trading_patterns(text)
-            if "error" not in result:
-                return (
-                    f"Trading Analysis (Pandas):\n"
-                    f"  • Avg Price: ${result['avg_price']}\n"
-                    f"  • Volatility: {result['price_volatility']}%\n"
-                    f"  • Price Change: {result['price_change_pct']}%\n"
-                    f"  • Range: ${result['min_price']} - ${result['max_price']}"
-                )
-
-        # Moving average calculation
-        if "moving average" in q or "ma" in q or "trend" in q:
-            result = calculate_moving_average(text, window=5)
-            if "error" not in result:
-                signal = "📈 Above" if result["above_ma"] else "📉 Below"
-                return (
-                    f"Moving Average Analysis:\n"
-                    f"  • Latest Price: ${result['latest_price']}\n"
-                    f"  • 5-day MA: ${result['moving_average']}\n"
-                    f"  • Signal: {signal} MA"
-                )
+        if "timeline" in q or "duration" in q:
+            return timeline_tool(text)
+        elif "missing" in q or "validate" in q:
+            return validation_tool(text)
+        elif "range" in q or ("high" in q and "low" in q):
+            return price_range_tool(text)
+        elif "pattern" in q or "statistics" in q:
+            return patterns_tool(text)
+        elif "moving average" in q or "trend" in q:
+            return moving_average_tool(text)
 
         return None

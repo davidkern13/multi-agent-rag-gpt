@@ -1,5 +1,5 @@
 class ManagerAgent:
-    def __init__(self, needle_agent, summary_agent, llm, mcp):
+    def __init__(self, needle_agent, summary_agent, llm, mcp=None):
         self.needle_agent = needle_agent
         self.summary_agent = summary_agent
         self.llm = llm
@@ -22,28 +22,20 @@ RELEVANT queries include:
 - Technical analysis (moving averages, trends)
 - ANY question about November 2025 PLTR trading data
 
-IRRELEVANT queries (respond with disclaimer):
-- Investment advice or recommendations ("should I buy/sell?", "is it a good investment?")
-- Future price predictions or forecasts ("will the price go up?", "what will happen next?")
-- Financial planning or portfolio advice
-- Risk assessment or recommendations
+IRRELEVANT queries:
 - Questions about other stocks
 - Questions about other time periods (not November 2025)
 - General questions unrelated to stock data
+- Requests for investment advice or predictions
 
 Query: "{query}"
 
 Rules:
-1. If it's a greeting (hi, hello, hey) → respond with "GREETING: [friendly response inviting them to ask about PLTR November 2025 data]"
+1. If it's a greeting (hi, hello, hey) → respond with "GREETING: [friendly response inviting them to ask about PLTR data]"
+2. If it asks ANYTHING about PLTR November 2025 trading (prices, dates, comparisons, stats) → respond "RELEVANT"
+3. If it's completely unrelated → respond "IRRELEVANT: [explain you only handle PLTR November 2025 data]"
 
-2. If it asks for INVESTMENT ADVICE or FUTURE PREDICTIONS → respond "ADVICE: I can only analyze historical November 2025 PLTR trading data. I cannot provide investment advice, predict future prices, or make financial recommendations. I'm designed for educational analysis of past data only, not as a financial advisor or investment tool."
-
-3. If it asks ANYTHING about PLTR November 2025 trading (prices, dates, comparisons, stats) → respond "RELEVANT"
-
-4. If it's completely unrelated → respond "IRRELEVANT: [explain you only handle PLTR November 2025 trading data analysis]"
-
-BE GENEROUS with historical data questions - if there's ANY connection to analyzing past trading data, mark it RELEVANT.
-BE STRICT with advice/predictions - always decline and explain limitations clearly.
+BE GENEROUS - if there's ANY connection to trading data analysis, mark it RELEVANT.
 
 Response:"""
 
@@ -57,16 +49,11 @@ Response:"""
                 message = response.replace("GREETING:", "").strip()
                 return False, message
 
-            elif response.startswith("ADVICE:"):
-                message = response.replace("ADVICE:", "").strip()
-                return False, message
-
             elif response.startswith("IRRELEVANT:"):
                 message = response.replace("IRRELEVANT:", "").strip()
                 return False, message
 
             else:
-                # Default to allowing the query if response format is unexpected
                 return True, None
 
         except Exception as e:
@@ -127,28 +114,44 @@ Response:"""
 
     def route_stream(self, query: str):
         """
-        Route query to appropriate agent with streaming response.
+        Stream response with LLM relevance check
         Yields: (text_chunk, contexts, is_final)
         """
-        # Check query relevance first
-        is_relevant, response_message = self.is_relevant_query(query)
+        is_relevant, message = self.is_relevant_query(query)
 
         if not is_relevant:
-            # Return the custom response message
-            yield response_message, [], False
-            yield response_message, [], True
+            yield message, [], True
             return
 
-        # Classify intent
         intent = self.classify_intent(query)
 
+        print(f"[WARN] Intent: {intent}")
+
         if intent == "summary":
-            print(f"[Manager] Routing to SummaryAgent")
+            full_answer = ""
+
             for chunk, is_final in self.summary_agent.answer_stream(query):
-                yield chunk, [], is_final
+                if is_final:
+                    full_answer = chunk
+                    yield chunk, [], True
+                else:
+                    yield chunk, [], False
             return
 
-        # Default: Needle agent
-        print(f"[Manager] Routing to NeedleAgent")
-        for chunk, contexts, is_final in self.needle_agent.answer_stream(query):
-            yield chunk, contexts, is_final
+        full_answer = ""
+        contexts = []
+
+        for delta, ctxs, is_final in self.needle_agent.answer_stream(query):
+            if is_final:
+                full_answer = delta
+                contexts = ctxs
+            else:
+                yield delta, [], False
+
+        if self.mcp and full_answer:
+            extra = self.mcp.run(query, contexts)
+            if extra:
+                full_answer += f"\n\n{extra}"
+                yield f"\n\n{extra}", contexts, False
+
+        yield full_answer, contexts, True

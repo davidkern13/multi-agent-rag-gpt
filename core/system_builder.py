@@ -20,7 +20,8 @@ def build_system(data_path: str) -> ManagerAgent:
     )
 
     summary_agent = SummarizationAgent(
-        indexes["summary_index"],
+        indexes["summary_retriever"],
+        llm,
     )
 
     manager = ManagerAgent(
