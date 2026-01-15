@@ -30,7 +30,7 @@ chroma_db
 # OS
 .DS_Store
 Thumbs.db
-
+evaluation.md
 # Streamlit
 .streamlit/secrets.toml
 

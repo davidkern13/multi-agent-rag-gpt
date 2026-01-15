@@ -1,68 +1,25 @@
 """
 Summarization Agent - Executive Financial Analysis
 
-- Investment-grade analysis using LangChain agents
+- Investment-grade analysis using LangGraph agents
 - Uses tools for summary retrieval
 """
 
-from langchain.agents import create_agent
-from langchain.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 from typing import Generator, Tuple
 
 
 class SummarizationAgent:
     """
-    Executive Financial Analysis Agent with LangChain agents.
+    Executive Financial Analysis Agent with LangGraph agents.
     
     Role: Chief Investment Analyst / Portfolio Manager
     Focus: High-level strategic insights and comprehensive summaries
     """
     
-    def __init__(self, summary_retriever, llm, debug=False):
-        self.retriever = summary_retriever
-        self.llm = llm
-        self.debug = debug
-        
-        # Create tools and agent
-        self.tools = self._create_tools()
-        self.agent = self._create_agent()
-    
-    def _create_tools(self):
-        """Create summary retrieval tools."""
-        
-        @tool
-        def get_executive_summary(topic: str) -> str:
-            """
-            Get high-level summary and strategic analysis of SEC filing.
-            Use this for overview questions, financial health assessments, and executive briefings.
-            
-            Args:
-                topic: The topic or aspect to summarize (e.g., "overall financial health", "key risks", "outlook")
-                
-            Returns:
-                High-level summary information from the SEC filing
-            """
-            if self.debug:
-                print(f"[SummaryAgent] Tool call: get_executive_summary('{topic}')")
-            
-            # Retrieve summary contexts
-            contexts = self.retriever.retrieve(topic)
-            
-            if not contexts:
-                return "No summary information found on this topic."
-            
-            # Get top summary contexts
-            summary_texts = [c.text for c in contexts[:7]]
-            formatted = "\n\n---\n\n".join(summary_texts)
-            
-            return formatted
-        
-        return [get_executive_summary]
-    
-    def _create_agent(self):
-        """Create LangChain agent with executive analyst prompt."""
-        
-        system_prompt = """You are a Chief Investment Analyst at a major investment bank, preparing briefings for institutional investors and C-suite executives. You have deep expertise in:
+    SYSTEM_PROMPT = """You are a Chief Investment Analyst at a major investment bank, preparing briefings for institutional investors and C-suite executives. You have deep expertise in:
 - Financial statement analysis
 - Industry dynamics and competitive positioning
 - Risk assessment and due diligence
@@ -169,11 +126,58 @@ IMPORTANT RULES:
 - Note significant YoY or QoQ changes
 - Flag any unusual items or one-time events"""
 
-        # Create agent
-        agent = create_agent(
+    def __init__(self, summary_retriever, llm, debug=False):
+        self.retriever = summary_retriever
+        self.llm = llm
+        self.debug = debug
+        
+        # Create tools and agent
+        self.tools = self._create_tools()
+        self.agent = self._create_agent()
+    
+    def _create_tools(self):
+        """Create summary retrieval tools."""
+        
+        # Store reference to self for use in tool
+        agent_self = self
+        
+        @tool
+        def get_executive_summary(topic: str) -> str:
+            """
+            Get high-level summary and strategic analysis of SEC filing.
+            Use this for overview questions, financial health assessments, and executive briefings.
+            
+            Args:
+                topic: The topic or aspect to summarize (e.g., "overall financial health", "key risks", "outlook")
+                
+            Returns:
+                High-level summary information from the SEC filing
+            """
+            if agent_self.debug:
+                print(f"[SummaryAgent] Tool call: get_executive_summary('{topic}')")
+            
+            # Retrieve summary contexts
+            contexts = agent_self.retriever.retrieve(topic)
+            
+            if not contexts:
+                return "No summary information found on this topic."
+            
+            # Get top summary contexts
+            summary_texts = [c.text for c in contexts[:7]]
+            formatted = "\n\n---\n\n".join(summary_texts)
+            
+            return formatted
+        
+        return [get_executive_summary]
+    
+    def _create_agent(self):
+        """Create LangGraph agent with executive analyst prompt."""
+        
+        # Create agent using langgraph
+        # Note: We pass system message in invoke() for compatibility
+        agent = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=system_prompt,
         )
         
         return agent
@@ -184,9 +188,12 @@ IMPORTANT RULES:
             print(f"[SummaryAgent] Query: {query}")
         
         try:
-            # Invoke the agent
+            # Invoke the agent with system message included in messages
             result = self.agent.invoke({
-                "messages": [{"role": "user", "content": query}]
+                "messages": [
+                    SystemMessage(content=self.SYSTEM_PROMPT),
+                    HumanMessage(content=query)
+                ]
             })
             
             # Extract answer from messages

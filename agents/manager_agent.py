@@ -1,7 +1,7 @@
 """
 Manager Agent - With Memory, HITL, and MCP
 
-- LangChain agents with routing
+- LangGraph agents with routing
 - Conversation memory
 - Human-in-the-loop
 - MCP financial tools integration
@@ -11,8 +11,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from langchain.agents import create_agent
-from langchain.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 from typing import Tuple, List, Optional, Generator, Dict
 from agents.conversation_memory import ConversationMemory
 from agents.hitl import HITLManager, QuestionComplexity, ConfidenceLevel
@@ -20,99 +21,10 @@ from agents.hitl import HITLManager, QuestionComplexity, ConfidenceLevel
 
 class ManagerAgent:
     """
-    Intelligent Query Router with Memory, HITL, and MCP using LangChain agents.
+    Intelligent Query Router with Memory, HITL, and MCP using LangGraph agents.
     """
     
-    def __init__(self, needle_agent, summary_agent, llm, mcp=None, debug=False):
-        self.needle_agent = needle_agent
-        self.summary_agent = summary_agent
-        self.llm = llm
-        self.mcp = mcp  # Financial MCP tools
-        self.debug = debug
-        
-        self._last_contexts = []
-        
-        # Memory and HITL
-        self.memory = ConversationMemory(max_messages=10)
-        self.hitl = HITLManager(llm=llm)
-        
-        # Create tools and agent
-        self.tools = self._create_tools()
-        self.agent = self._create_agent()
-    
-    def _create_tools(self):
-        """Create routing tools for the agent."""
-        
-        @tool
-        def search_specific_data(query: str) -> str:
-            """
-            Search for specific financial data in the SEC filing.
-            Use this for: exact numbers, dates, financial metrics, specific facts.
-            Examples: revenue amounts, dates, ratios, comparisons, specific sections.
-            
-            Args:
-                query: The specific information to find
-                
-            Returns:
-                Detailed financial data with exact figures
-            """
-            if self.debug:
-                print(f"[Manager→Needle] {query}")
-            
-            # Route to needle agent
-            answer, contexts, _ = self.needle_agent.answer(query)
-            self._last_contexts = contexts
-            
-            # Apply MCP analysis if available and relevant
-            if self.mcp and contexts:
-                mcp_output = self.mcp.run(query, contexts)
-                if mcp_output:
-                    answer = answer + "\n\n" + mcp_output
-            
-            return answer
-        
-        @tool
-        def get_executive_analysis(topic: str) -> str:
-            """
-            Get high-level executive analysis and strategic insights.
-            Use this for: summaries, financial health assessment, strategic analysis, recommendations.
-            Examples: "overall financial health", "key risks", "management outlook", "strategic position".
-            
-            Args:
-                topic: The aspect to analyze at executive level
-                
-            Returns:
-                Executive-level analysis and strategic insights
-            """
-            if self.debug:
-                print(f"[Manager→Summary] {topic}")
-            
-            # Route to summary agent
-            answer = self.summary_agent.answer(topic)
-            
-            return answer
-        
-        @tool
-        def respond_without_tools() -> str:
-            """
-            Respond directly without using any data retrieval tools.
-            Use this ONLY for: greetings, general questions about capabilities, 
-            declining inappropriate requests (investment advice, buy/sell recommendations).
-            
-            DO NOT use this for questions about the SEC filing - always use search tools for that.
-            
-            Returns:
-                A direct response without data retrieval
-            """
-            # This tool is just a placeholder - the agent will provide the response
-            return "RESPOND_DIRECTLY"
-        
-        return [search_specific_data, get_executive_analysis, respond_without_tools]
-    
-    def _create_agent(self):
-        """Create LangChain routing agent."""
-        
-        system_prompt = """You are an Intelligent Financial Analysis Manager coordinating specialized agents.
+    SYSTEM_PROMPT = """You are an Intelligent Financial Analysis Manager coordinating specialized agents.
 
 YOUR ROLE:
 - Route queries to the appropriate tool based on the question type
@@ -175,12 +87,104 @@ CRITICAL RULES:
 - For greetings/inappropriate requests: use respond_without_tools
 - Always provide value - redirect when declining
 - If uncertain, prefer search_specific_data for data questions"""
-
-        # Create agent
-        agent = create_agent(
+    
+    def __init__(self, needle_agent, summary_agent, llm, mcp=None, debug=False):
+        self.needle_agent = needle_agent
+        self.summary_agent = summary_agent
+        self.llm = llm
+        self.mcp = mcp  # Financial MCP tools
+        self.debug = debug
+        
+        self._last_contexts = []
+        
+        # Memory and HITL
+        self.memory = ConversationMemory(max_messages=10)
+        self.hitl = HITLManager(llm=llm)
+        
+        # Create tools and agent
+        self.tools = self._create_tools()
+        self.agent = self._create_agent()
+    
+    def _create_tools(self):
+        """Create routing tools for the agent."""
+        
+        # Store reference to self for use in tools
+        manager_self = self
+        
+        @tool
+        def search_specific_data(query: str) -> str:
+            """
+            Search for specific financial data in the SEC filing.
+            Use this for: exact numbers, dates, financial metrics, specific facts.
+            Examples: revenue amounts, dates, ratios, comparisons, specific sections.
+            
+            Args:
+                query: The specific information to find
+                
+            Returns:
+                Detailed financial data with exact figures
+            """
+            if manager_self.debug:
+                print(f"[Manager→Needle] {query}")
+            
+            # Route to needle agent
+            answer, contexts, _ = manager_self.needle_agent.answer(query)
+            manager_self._last_contexts = contexts
+            
+            # Apply MCP analysis if available and relevant
+            if manager_self.mcp and contexts:
+                mcp_output = manager_self.mcp.run(query, contexts)
+                if mcp_output:
+                    answer = answer + "\n\n" + mcp_output
+            
+            return answer
+        
+        @tool
+        def get_executive_analysis(topic: str) -> str:
+            """
+            Get high-level executive analysis and strategic insights.
+            Use this for: summaries, financial health assessment, strategic analysis, recommendations.
+            Examples: "overall financial health", "key risks", "management outlook", "strategic position".
+            
+            Args:
+                topic: The aspect to analyze at executive level
+                
+            Returns:
+                Executive-level analysis and strategic insights
+            """
+            if manager_self.debug:
+                print(f"[Manager→Summary] {topic}")
+            
+            # Route to summary agent
+            answer = manager_self.summary_agent.answer(topic)
+            
+            return answer
+        
+        @tool
+        def respond_without_tools() -> str:
+            """
+            Respond directly without using any data retrieval tools.
+            Use this ONLY for: greetings, general questions about capabilities, 
+            declining inappropriate requests (investment advice, buy/sell recommendations).
+            
+            DO NOT use this for questions about the SEC filing - always use search tools for that.
+            
+            Returns:
+                A direct response without data retrieval
+            """
+            # This tool is just a placeholder - the agent will provide the response
+            return "RESPOND_DIRECTLY"
+        
+        return [search_specific_data, get_executive_analysis, respond_without_tools]
+    
+    def _create_agent(self):
+        """Create LangGraph routing agent."""
+        
+        # Create agent using langgraph
+        # Note: We pass system message in invoke() for compatibility
+        agent = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=system_prompt,
         )
         
         return agent
@@ -225,8 +229,12 @@ Use the conversation context to better understand the question."""
             if self.debug:
                 print(f"[Manager] Invoking agent with query: {query}")
             
+            # Include system message in messages for compatibility
             result = self.agent.invoke({
-                "messages": [{"role": "user", "content": contextual_query}]
+                "messages": [
+                    SystemMessage(content=self.SYSTEM_PROMPT),
+                    HumanMessage(content=contextual_query)
+                ]
             })
             
             # Extract answer from messages

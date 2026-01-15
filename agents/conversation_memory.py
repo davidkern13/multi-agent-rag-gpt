@@ -7,20 +7,19 @@ without additional custom logic.
 
 from typing import List, Dict, Optional, Any
 
-from langchain.memory import ConversationBufferWindowMemory
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 
 class ConversationMemory:
     """
-    Simple conversation memory using LangChain's ConversationBufferWindowMemory.
+    Simple conversation memory using in-memory chat history.
     
     This is a thin wrapper that provides backward compatibility with the
-    original ConversationMemory interface while using LangChain's memory
-    management under the hood.
+    original ConversationMemory interface.
     
     Attributes:
-        langchain_memory: The underlying LangChain memory instance
+        chat_history: The underlying chat message history
     """
     
     # Configuration constants
@@ -29,25 +28,27 @@ class ConversationMemory:
     def __init__(
         self,
         window_size: Optional[int] = None,
+        max_messages: Optional[int] = None,  # Alias for backward compatibility
         return_messages: bool = True,
         memory_key: str = "chat_history"
     ):
         """
-        Initialize conversation memory with LangChain.
+        Initialize conversation memory.
         
         Args:
             window_size: Number of messages to keep (default: 10)
+            max_messages: Alias for window_size (backward compatibility)
             return_messages: Return messages as objects vs strings
             memory_key: Key to use for memory in agent state
         """
-        self._window_size = window_size if window_size is not None else self.DEFAULT_WINDOW_SIZE
+        # Support both parameter names
+        size = max_messages or window_size
+        self._window_size = size if size is not None else self.DEFAULT_WINDOW_SIZE
+        self._memory_key = memory_key
+        self._return_messages = return_messages
         
-        # Initialize LangChain memory - that's it!
-        self.langchain_memory = ConversationBufferWindowMemory(
-            k=self._window_size,
-            return_messages=return_messages,
-            memory_key=memory_key
-        )
+        # Use ChatMessageHistory directly
+        self.chat_history = ChatMessageHistory()
     
     # Backward compatible methods
     
@@ -58,7 +59,7 @@ class ConversationMemory:
         Args:
             role: Message role ('user' or 'assistant')
             content: Message content
-            metadata: Optional message metadata (ignored - LangChain doesn't support this)
+            metadata: Optional message metadata (ignored)
         """
         if role == "user":
             self.add_user_message(content)
@@ -72,7 +73,8 @@ class ConversationMemory:
         Args:
             content: Message content
         """
-        self.langchain_memory.chat_memory.add_user_message(content)
+        self.chat_history.add_user_message(content)
+        self._trim_to_window()
     
     def add_ai_message(self, content: str) -> None:
         """
@@ -81,7 +83,15 @@ class ConversationMemory:
         Args:
             content: Message content
         """
-        self.langchain_memory.chat_memory.add_ai_message(content)
+        self.chat_history.add_ai_message(content)
+        self._trim_to_window()
+    
+    def _trim_to_window(self) -> None:
+        """Trim messages to window size."""
+        messages = self.chat_history.messages
+        if len(messages) > self._window_size * 2:  # *2 because user+assistant pairs
+            # Keep only the last window_size pairs
+            self.chat_history.messages = messages[-(self._window_size * 2):]
     
     def get_messages(self) -> List[BaseMessage]:
         """
@@ -90,7 +100,7 @@ class ConversationMemory:
         Returns:
             List of LangChain message objects
         """
-        return self.langchain_memory.chat_memory.messages
+        return self.chat_history.messages
     
     def get_context_summary(self) -> str:
         """
@@ -114,9 +124,62 @@ class ConversationMemory:
         
         return "\n".join(parts)
     
+    def enrich_query(self, query: str) -> str:
+        """
+        Enrich a follow-up query with context from previous messages.
+        
+        Handles pronouns and references like "it", "that", "the company", etc.
+        by looking at the conversation history.
+        
+        Args:
+            query: The current query
+            
+        Returns:
+            Enriched query with context if needed, otherwise original query
+        """
+        query_lower = query.lower().strip()
+        messages = self.get_messages()
+        
+        if not messages:
+            return query
+        
+        # Check if query seems like a follow-up
+        follow_up_indicators = [
+            "it", "that", "this", "they", "them", "their",
+            "the company", "the same", "more about", "what about",
+            "and what", "how about", "tell me more", "explain more",
+            "why", "how come", "what else"
+        ]
+        
+        is_follow_up = any(
+            indicator in query_lower 
+            for indicator in follow_up_indicators
+        ) and len(query.split()) < 10
+        
+        if not is_follow_up:
+            return query
+        
+        # Find the last user message topic
+        last_topic = None
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                # Extract potential topic from previous query
+                content = msg.content.lower()
+                # Skip if it's the same as current query
+                if content.strip() == query_lower:
+                    continue
+                last_topic = msg.content
+                break
+        
+        if last_topic and last_topic != query:
+            # Enrich the query with context
+            return f"{query} (in context of: {last_topic})"
+        
+        return query
+    
     def clear(self) -> None:
         """Clear all conversation memory."""
-        self.langchain_memory.clear()
+        self.chat_history.clear()
     
     # LangChain compatibility methods
     
@@ -125,10 +188,13 @@ class ConversationMemory:
         Save conversation context (LangChain compatibility).
         
         Args:
-            inputs: Input dictionary
-            outputs: Output dictionary
+            inputs: Input dictionary (expects 'input' key)
+            outputs: Output dictionary (expects 'output' key)
         """
-        self.langchain_memory.save_context(inputs, outputs)
+        if "input" in inputs:
+            self.add_user_message(inputs["input"])
+        if "output" in outputs:
+            self.add_ai_message(outputs["output"])
     
     def load_memory_variables(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -140,7 +206,10 @@ class ConversationMemory:
         Returns:
             Dictionary with memory variables
         """
-        return self.langchain_memory.load_memory_variables(inputs)
+        if self._return_messages:
+            return {self._memory_key: self.get_messages()}
+        else:
+            return {self._memory_key: self.get_context_summary()}
     
     # Properties for backward compatibility
     
@@ -151,5 +220,10 @@ class ConversationMemory:
     
     @property
     def memory(self):
-        """Get LangChain memory (for agent integration)."""
-        return self.langchain_memory
+        """Get self for backward compatibility."""
+        return self
+    
+    @property
+    def langchain_memory(self):
+        """Backward compatibility alias."""
+        return self

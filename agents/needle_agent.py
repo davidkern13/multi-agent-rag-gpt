@@ -1,80 +1,25 @@
 """
 Needle Agent - Precision Financial Data Extraction
 
-- Expert SEC filing analyst using LangChain agents
+- Expert SEC filing analyst using LangGraph agents
 - Uses tools for retrieval
 """
 
-from langchain.agents import create_agent
-from langchain.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 from typing import List, Tuple, Optional, Generator
 
 
 class NeedleAgent:
     """
-    Precision Financial Data Extraction Agent with LangChain agents.
+    Precision Financial Data Extraction Agent with LangGraph agents.
     
     Role: Forensic accountant / Financial data specialist
     Focus: Extract exact figures, dates, and facts from SEC filings
     """
     
-    def __init__(self, retriever, llm, debug=False):
-        self.retriever = retriever
-        self.llm = llm
-        self.debug = debug
-        self._contexts = []
-        
-        # Create tools and agent
-        self.tools = self._create_tools()
-        self.agent = self._create_agent()
-    
-    def _create_tools(self):
-        """Create retrieval tools for the agent."""
-        
-        @tool
-        def search_sec_filing(query: str) -> str:
-            """
-            Search SEC filing documents for specific information.
-            Use this to find exact numbers, dates, facts, and financial data.
-            
-            Args:
-                query: What to search for in the documents
-                
-            Returns:
-                Relevant excerpts from the SEC filing
-            """
-            if self.debug:
-                print(f"[NeedleAgent] Tool call: search_sec_filing('{query}')")
-            
-            # Retrieve contexts
-            nodes = self.retriever.retrieve(query)
-            contexts = [n.get_content() for n in nodes[:15]]
-            
-            # Lost-in-the-middle mitigation
-            max_ctx = 8
-            if len(contexts) > max_ctx:
-                half = max_ctx // 2
-                contexts = contexts[:half] + contexts[-half:]
-            
-            # Save for later access
-            self._contexts = contexts
-            
-            if not contexts:
-                return "No relevant information found in the SEC filing."
-            
-            # Format contexts
-            formatted = "\n\n---\n\n".join(
-                [f"[Excerpt {i+1}]\n{ctx}" for i, ctx in enumerate(contexts)]
-            )
-            
-            return formatted
-        
-        return [search_sec_filing]
-    
-    def _create_agent(self):
-        """Create LangChain agent with expert financial analyst prompt."""
-        
-        system_prompt = """You are a Senior Financial Analyst with 15+ years of experience analyzing SEC filings (10-K, 10-Q, 8-K reports). Your expertise includes forensic accounting, financial statement analysis, and regulatory compliance.
+    SYSTEM_PROMPT = """You are a Senior Financial Analyst with 15+ years of experience analyzing SEC filings (10-K, 10-Q, 8-K reports). Your expertise includes forensic accounting, financial statement analysis, and regulatory compliance.
 
 YOUR ANALYSIS APPROACH:
 
@@ -123,11 +68,70 @@ CRITICAL RULES:
 - Net LOSS is NEGATIVE - never confuse with profit
 - Always specify if amounts are in thousands, millions, or billions"""
 
-        # Create agent
-        agent = create_agent(
+    def __init__(self, retriever, llm, debug=False):
+        self.retriever = retriever
+        self.llm = llm
+        self.debug = debug
+        self._contexts = []
+        
+        # Create tools and agent
+        self.tools = self._create_tools()
+        self.agent = self._create_agent()
+    
+    def _create_tools(self):
+        """Create retrieval tools for the agent."""
+        
+        # Store reference to self for use in tool
+        agent_self = self
+        
+        @tool
+        def search_sec_filing(query: str) -> str:
+            """
+            Search SEC filing documents for specific information.
+            Use this to find exact numbers, dates, facts, and financial data.
+            
+            Args:
+                query: What to search for in the documents
+                
+            Returns:
+                Relevant excerpts from the SEC filing
+            """
+            if agent_self.debug:
+                print(f"[NeedleAgent] Tool call: search_sec_filing('{query}')")
+            
+            # Retrieve contexts
+            nodes = agent_self.retriever.retrieve(query)
+            contexts = [n.get_content() for n in nodes[:15]]
+            
+            # Lost-in-the-middle mitigation
+            max_ctx = 8
+            if len(contexts) > max_ctx:
+                half = max_ctx // 2
+                contexts = contexts[:half] + contexts[-half:]
+            
+            # Save for later access
+            agent_self._contexts = contexts
+            
+            if not contexts:
+                return "No relevant information found in the SEC filing."
+            
+            # Format contexts
+            formatted = "\n\n---\n\n".join(
+                [f"[Excerpt {i+1}]\n{ctx}" for i, ctx in enumerate(contexts)]
+            )
+            
+            return formatted
+        
+        return [search_sec_filing]
+    
+    def _create_agent(self):
+        """Create LangGraph agent with expert financial analyst prompt."""
+        
+        # Create agent using langgraph
+        # Note: We pass system message in invoke() for compatibility
+        agent = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=system_prompt,
         )
         
         return agent
@@ -143,9 +147,12 @@ CRITICAL RULES:
             print(f"[NeedleAgent] Query: {query}")
         
         try:
-            # Invoke the agent
+            # Invoke the agent with system message included in messages
             result = self.agent.invoke({
-                "messages": [{"role": "user", "content": query}]
+                "messages": [
+                    SystemMessage(content=self.SYSTEM_PROMPT),
+                    HumanMessage(content=query)
+                ]
             })
             
             # Extract answer from messages
