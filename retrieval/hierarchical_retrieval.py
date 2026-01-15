@@ -1,3 +1,10 @@
+"""
+Hierarchical Retrieval - Financial Reports
+
+- SEC filing indexing
+- Auto-Merging Retriever
+"""
+
 from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
 from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -12,10 +19,22 @@ from retrieval.metadata_extractor import (
 from ingestion.chunking import build_hierarchical_nodes
 
 
-def build_hierarchical_retriever(docs, embed_model, top_k: int = 40):
+def build_hierarchical_retriever(docs, embed_model, top_k: int = 5):
+    """
+    Build hierarchical retriever for SEC filings.
+    Uses Auto-Merging strategy for context expansion.
+    
+    Args:
+        docs: List of documents
+        embed_model: Embedding model
+        top_k: Number of results to retrieve
+        
+    Returns:
+        AutoMergingRetriever
+    """
     chroma_path = "./chroma_storage"
     docstore_path = "./docstore_hierarchical"
-    collection_name = "insurance_hierarchical"
+    collection_name = "financial_hierarchical"  # Changed from insurance
 
     chroma_exists = os.path.exists(chroma_path)
     docstore_exists = os.path.exists(docstore_path)
@@ -37,7 +56,7 @@ def build_hierarchical_retriever(docs, embed_model, top_k: int = 40):
                 embed_model=embed_model,
             )
 
-            print("[INFO] ✅ Loaded existing index successfully! No chunking needed.")
+            print("[INFO] ✅ Loaded existing index successfully!")
 
             return AutoMergingRetriever(
                 index.as_retriever(similarity_top_k=top_k),
@@ -53,31 +72,28 @@ def build_hierarchical_retriever(docs, embed_model, top_k: int = 40):
         print("[INFO] No existing storage found, creating new index...")
 
     # ==========================================
-    # CREATE NEW INDEX FROM SCRATCH
+    # CREATE NEW INDEX
     # ==========================================
 
     print("[INFO] Extracting entities from documents...")
     all_entities = set()
     for doc in docs:
         entities = extract_entities_from_text(doc.text, top_n=20)
-        all_entities.update(entities)
-    print(
-        f"[INFO] Found {len(all_entities)} unique entities: {list(all_entities)[:10]}..."
-    )
+        all_entities.update([e[0] for e in entities])
+    print(f"[INFO] Found {len(all_entities)} unique entities")
 
-    print("[INFO] Creating hierarchical chunks using chunking module...")
+    print("[INFO] Creating hierarchical chunks...")
     nodes, leaf_nodes = build_hierarchical_nodes(docs)
+    print(f"[INFO] Created {len(nodes)} total nodes, {len(leaf_nodes)} leaf nodes")
 
     print("[INFO] Adding metadata to nodes...")
     for node in leaf_nodes:
         text = node.get_content()
-        node.metadata.update(
-            {
-                "doc_type": extract_doc_type(text),
-                "section_title": extract_section_title(text),
-                "parent_id": node.parent_node.node_id if node.parent_node else None,
-            }
-        )
+        node.metadata.update({
+            "doc_type": extract_doc_type(text),
+            "section_title": extract_section_title(text),
+            "parent_id": node.parent_node.node_id if node.parent_node else None,
+        })
 
     print("[INFO] Creating ChromaDB...")
     chroma_client = chromadb.PersistentClient(path=chroma_path)
@@ -101,12 +117,10 @@ def build_hierarchical_retriever(docs, embed_model, top_k: int = 40):
         show_progress=True,
     )
 
-    print(f"[INFO] Persisting docstore to {docstore_path}...")
+    print(f"[INFO] Persisting to {docstore_path}...")
     storage_context.persist(persist_dir=docstore_path)
 
-    print(f"[INFO] ✅ Created and persisted new index!")
-    print(f"[INFO]    - ChromaDB: {chroma_path}")
-    print(f"[INFO]    - Docstore: {docstore_path}")
+    print("[INFO] ✅ Created financial hierarchical index!")
 
     return AutoMergingRetriever(
         index.as_retriever(similarity_top_k=top_k),

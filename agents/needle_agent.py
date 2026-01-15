@@ -1,206 +1,179 @@
+"""
+Needle Agent - Precision Financial Data Extraction
+
+- Expert SEC filing analyst using LangChain agents
+- Uses tools for retrieval
+"""
+
+from langchain.agents import create_agent
+from langchain.tools import tool
+from typing import List, Tuple, Optional, Generator
+
+
 class NeedleAgent:
+    """
+    Precision Financial Data Extraction Agent with LangChain agents.
+    
+    Role: Forensic accountant / Financial data specialist
+    Focus: Extract exact figures, dates, and facts from SEC filings
+    """
+    
     def __init__(self, retriever, llm, debug=False):
         self.retriever = retriever
         self.llm = llm
         self.debug = debug
-
-    def _is_statistical_query(self, query: str) -> bool:
-        """
-        Check if query requires statistical analysis across all data points
-        """
-        statistical_keywords = [
-            "highest",
-            "lowest",
-            "maximum",
-            "minimum",
-            "max",
-            "min",
-            "best",
-            "worst",
-            "most",
-            "least",
-            "average",
-            "total",
-            "sum",
-            "count",
-            "all days",
-            "across all",
-        ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in statistical_keywords)
-
-    def _get_query_instruction(self, query: str) -> str:
-        """
-        Generate specific instructions based on query type
-        """
-        query_lower = query.lower()
-
-        if "highest" in query_lower or "maximum" in query_lower or "max" in query_lower:
-            return """
-🔍 CRITICAL INSTRUCTION - MAXIMUM VALUE SEARCH:
-This question asks for the HIGHEST/MAXIMUM value.
-
-YOU MUST:
-1. Scan through EVERY date and percentage in ALL contexts provided
-2. Compare ALL values to find the absolute maximum
-3. Do NOT stop at the first high value you see
-4. Return ONLY the date with the TRUE HIGHEST percentage
-5. Include the exact date, percentage, close price, and range
-
-WRONG: Returning the first day with a high percentage
-RIGHT: Comparing all days and returning the absolute maximum
-"""
-
-        elif (
-            "lowest" in query_lower or "minimum" in query_lower or "min" in query_lower
-        ):
-            return """
-🔍 CRITICAL INSTRUCTION - MINIMUM VALUE SEARCH:
-This question asks for the LOWEST/MINIMUM value.
-
-YOU MUST:
-1. Scan through EVERY date and percentage in ALL contexts provided
-2. Compare ALL values to find the absolute minimum
-3. Do NOT stop at the first low value you see
-4. Return ONLY the date with the TRUE LOWEST percentage
-5. Include the exact date, percentage, close price, and range
-
-WRONG: Returning the first day with a low percentage
-RIGHT: Comparing all days and returning the absolute minimum
-"""
-
-        elif "average" in query_lower or "mean" in query_lower:
-            return """
-🔍 CRITICAL INSTRUCTION - AVERAGE CALCULATION:
-This question asks for an AVERAGE value.
-
-YOU MUST:
-1. Identify ALL relevant values in the contexts
-2. Calculate or estimate the average across all data points
-3. Show your calculation if possible
-4. Include the number of data points used
-"""
-
-        else:
-            return """
-🔍 INSTRUCTION - COMPREHENSIVE SEARCH:
-Scan through ALL contexts to find the most relevant information.
-If multiple values exist, compare them and provide the most accurate answer.
-"""
-
-    def answer(self, query: str):
-        is_statistical = self._is_statistical_query(query)
-
-        retrieval_count = 20 if is_statistical else 15
-        nodes = self.retriever.retrieve(query)
-
-        if is_statistical and len(nodes) < retrieval_count:
-            contexts = [n.get_content() for n in nodes]
-        else:
-            contexts = [n.get_content() for n in nodes[:retrieval_count]]
-
-        if self.debug:
-            print(f"\n🔍 Query Type: {'STATISTICAL' if is_statistical else 'STANDARD'}")
-            print(f"📊 Retrieved {len(contexts)} contexts")
-
-        # Lost-in-the-middle mitigation - but keep more for statistical queries
-        MAX_CTX = 20 if is_statistical else 15
-        if len(contexts) > MAX_CTX:
-            half = MAX_CTX // 2
-            contexts = contexts[:half] + contexts[-half:]
+        self._contexts = []
+        
+        # Create tools and agent
+        self.tools = self._create_tools()
+        self.agent = self._create_agent()
+    
+    def _create_tools(self):
+        """Create retrieval tools for the agent."""
+        
+        @tool
+        def search_sec_filing(query: str) -> str:
+            """
+            Search SEC filing documents for specific information.
+            Use this to find exact numbers, dates, facts, and financial data.
+            
+            Args:
+                query: What to search for in the documents
+                
+            Returns:
+                Relevant excerpts from the SEC filing
+            """
             if self.debug:
-                print(
-                    f"📉 Applied lost-in-middle mitigation: kept {len(contexts)} contexts"
-                )
+                print(f"[NeedleAgent] Tool call: search_sec_filing('{query}')")
+            
+            # Retrieve contexts
+            nodes = self.retriever.retrieve(query)
+            contexts = [n.get_content() for n in nodes[:15]]
+            
+            # Lost-in-the-middle mitigation
+            max_ctx = 8
+            if len(contexts) > max_ctx:
+                half = max_ctx // 2
+                contexts = contexts[:half] + contexts[-half:]
+            
+            # Save for later access
+            self._contexts = contexts
+            
+            if not contexts:
+                return "No relevant information found in the SEC filing."
+            
+            # Format contexts
+            formatted = "\n\n---\n\n".join(
+                [f"[Excerpt {i+1}]\n{ctx}" for i, ctx in enumerate(contexts)]
+            )
+            
+            return formatted
+        
+        return [search_sec_filing]
+    
+    def _create_agent(self):
+        """Create LangChain agent with expert financial analyst prompt."""
+        
+        system_prompt = """You are a Senior Financial Analyst with 15+ years of experience analyzing SEC filings (10-K, 10-Q, 8-K reports). Your expertise includes forensic accounting, financial statement analysis, and regulatory compliance.
 
-        context_text = "\n\n".join(contexts)
+YOUR ANALYSIS APPROACH:
 
-        specific_instruction = self._get_query_instruction(query)
+1. EXTRACT PRECISE DATA
+   - Quote exact dollar amounts: "$X.X million" or "$X.X billion"
+   - Include specific percentages with decimals
+   - Reference exact time periods: "For the year ended December 31, 2024" or "Q4 2024"
+   - Cite page numbers or sections when possible
 
-        prompt = f"""You are a financial data analysis assistant specializing in trading data.
+2. PROVIDE COMPARATIVE ANALYSIS
+   - Compare to prior periods: "Revenue increased 15% from $100M to $115M"
+   - Note trends: "This marks the third consecutive quarter of growth"
+   - Highlight significant changes: "Operating expenses decreased by $5M due to..."
 
-{specific_instruction}
+3. EXPLAIN THE NUMBERS
+   - What drove the change? "The increase was primarily due to..."
+   - What's the impact? "This resulted in improved margins of..."
+   - What's the context? "Compared to industry average of..."
 
-CONTEXT (Multiple Trading Days):
-{context_text}
+4. FLAG IMPORTANT DETAILS
+   - 🟢 Positive indicators: Growth, profitability, strong cash position
+   - 🔴 Warning signs: Losses, declining revenue, high debt, going concern
+   - 📌 Key assumptions or estimates used by management
 
-QUESTION: {query}
+RESPONSE FORMAT:
 
-GENERAL INSTRUCTIONS:
-- Provide a complete answer with relevant details (date, numbers, context)
-- If the question asks for a summary, provide a clear 2-3 sentence summary
-- If answering about percentages, include the actual values too
-- Be specific and cite exact information from the context
-- For statistical queries (highest/lowest/average), you MUST compare ALL data points
-- Double-check your answer before responding
-- If information is not found, reply: "Not found in the document."
+**[Direct Answer]**
+[Start with the specific answer to the question]
 
-ANSWER FORMAT:
-- Start with the direct answer to the question
-- Include supporting details: date, exact percentage/value, price, range
-- Add context about the market conditions if relevant
-- Keep it concise but complete
+**Key Figures:**
+• [Metric 1]: $X.X million (vs $X.X million prior year, +/-X%)
+• [Metric 2]: X.X% 
+• [Period]: [Specific time period]
 
-YOUR ANSWER:"""
+**Analysis:**
+[Provide context, explain drivers, note trends]
 
+**Important Notes:**
+[Any caveats, assumptions, or related information]
+
+CRITICAL RULES:
+- Use the search_sec_filing tool to find information - don't guess
+- If data is NOT in the search results, state: "This specific information was not found in the available filing sections."
+- Never invent or estimate numbers - only use exact figures from the filing
+- Distinguish between GAAP and Non-GAAP metrics when mentioned
+- Net LOSS is NEGATIVE - never confuse with profit
+- Always specify if amounts are in thousands, millions, or billions"""
+
+        # Create agent
+        agent = create_agent(
+            model=self.llm,
+            tools=self.tools,
+            system_prompt=system_prompt,
+        )
+        
+        return agent
+
+    @property
+    def contexts(self) -> List[str]:
+        """Get last retrieved contexts."""
+        return self._contexts
+
+    def answer(self, query: str) -> Tuple[str, List[str], Optional[dict]]:
+        """Answer a financial query with detailed analysis."""
         if self.debug:
-            print("\n" + "=" * 80)
-            print("📝 PROMPT SENT TO LLM:")
-            print("=" * 80)
-            print(prompt)
-            print("=" * 80 + "\n")
+            print(f"[NeedleAgent] Query: {query}")
+        
+        try:
+            # Invoke the agent
+            result = self.agent.invoke({
+                "messages": [{"role": "user", "content": query}]
+            })
+            
+            # Extract answer from messages
+            messages = result.get("messages", [])
+            if messages:
+                last_msg = messages[-1]
+                answer = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
+            else:
+                answer = "No response generated."
+            
+            return answer, self._contexts, None
+            
+        except Exception as e:
+            if self.debug:
+                print(f"[NeedleAgent] Error: {e}")
+            return f"Error: {str(e)}", [], None
 
-        response = self.llm.complete(prompt)
-
-        return response.text.strip(), contexts, response
-
-    def answer_stream(self, query: str):
-        """
-        Stream answer for real-time display
-        Returns: generator of (text_chunk, contexts, is_final)
-        """
-        is_statistical = self._is_statistical_query(query)
-
-        retrieval_count = 20 if is_statistical else 15
-        nodes = self.retriever.retrieve(query)
-
-        if is_statistical and len(nodes) < retrieval_count:
-            contexts = [n.get_content() for n in nodes]
-        else:
-            contexts = [n.get_content() for n in nodes[:retrieval_count]]
-
-        # Lost-in-the-middle mitigation
-        MAX_CTX = 20 if is_statistical else 15
-        if len(contexts) > MAX_CTX:
-            half = MAX_CTX // 2
-            contexts = contexts[:half] + contexts[-half:]
-
-        context_text = "\n\n".join(contexts)
-
-        specific_instruction = self._get_query_instruction(query)
-
-        prompt = f"""You are a financial data analysis assistant specializing in trading data.
-
-{specific_instruction}
-
-CONTEXT (Multiple Trading Days):
-{context_text}
-
-QUESTION: {query}
-
-GENERAL INSTRUCTIONS:
-- Provide a complete answer with relevant details (date, numbers, context)
-- Be specific and cite exact information from the context
-- For statistical queries (highest/lowest/average), you MUST compare ALL data points
-
-YOUR ANSWER:"""
-
-        response_stream = self.llm.stream_complete(prompt)
-
-        full_text = ""
-        for chunk in response_stream:
-            delta = chunk.delta
-            full_text += delta
-            yield delta, contexts, False
-
-        yield full_text, contexts, True
+    def answer_stream(self, query: str) -> Generator[Tuple[str, List[str], bool], None, None]:
+        """Stream answer with proper chunking."""
+        if self.debug:
+            print(f"[NeedleAgent] Streaming: {query}")
+        
+        # For now, get full answer then stream it
+        answer, contexts, _ = self.answer(query)
+        
+        # Stream character by character
+        for char in answer:
+            yield char, [], False
+        
+        # Final yield with contexts
+        yield "", contexts, True

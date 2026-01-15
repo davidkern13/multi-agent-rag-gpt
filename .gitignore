@@ -15,6 +15,7 @@ storage/
 docstore_hierarchical/
 *.db
 *.sqlite
+chroma_db
 
 # Environment
 .env

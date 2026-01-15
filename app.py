@@ -1,22 +1,26 @@
+"""
+Streamlit App - SEC Filing Analysis
+Based on original structure - only bug fix and topic adaptation
+"""
+
 import streamlit as st
-from core.tokenizer import analyze_token_usage, format_token_report
-from agents.cache_agent import CacheAgent
+import time
 
 st.set_page_config(
     layout="wide",
-    page_title="Trading Analysis",
+    page_title="SEC Filing Analysis",
     initial_sidebar_state="expanded",
     menu_items={
         "Get Help": None,
         "Report a bug": None,
-        "About": "Trading Analysis System - Educational purposes only",
+        "About": "SEC Filing Analysis System - Educational purposes only",
     },
 )
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "show_tokens" not in st.session_state:
-    st.session_state.show_tokens = False
+if "show_confidence" not in st.session_state:
+    st.session_state.show_confidence = True
 if "pending_query" not in st.session_state:
     st.session_state.pending_query = None
 if "is_processing" not in st.session_state:
@@ -26,19 +30,11 @@ if "is_processing" not in st.session_state:
 @st.cache_resource(show_spinner=False)
 def get_system():
     from core.system_builder import build_system
-
-    return build_system("data/data.pdf")
+    return build_system()
 
 
 if "manager" not in st.session_state:
     st.session_state.manager = get_system()
-
-if "cache_agent" not in st.session_state:
-    from llama_index.core import Settings
-
-    st.session_state.cache_agent = CacheAgent(
-        embed_model=Settings.embed_model, max_cache_size=50, similarity_threshold=0.8
-    )
 
 col1, col2 = st.columns([2.5, 1])
 
@@ -51,14 +47,17 @@ with col1:
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-                if "token_info" in msg and st.session_state.show_tokens:
-                    st.caption(msg["token_info"])
+                if msg.get("confidence") and st.session_state.show_confidence:
+                    conf_icons = {"high": "🟢", "medium": "🟡", "low": "🟠", "uncertain": "🔴"}
+                    conf = msg.get("confidence", "")
+                    if conf in conf_icons:
+                        st.caption(f"{conf_icons[conf]} Confidence: {conf}")
 
     user_input = st.chat_input(
         (
             "Processing..."
             if st.session_state.is_processing
-            else "Ask about trading data..."
+            else "Ask about SEC filing..."
         ),
         disabled=st.session_state.is_processing,
     )
@@ -81,149 +80,114 @@ with col1:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.is_processing = True
 
-        cached = st.session_state.cache_agent.get(prompt)
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        if cached:
-            with chat_container:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
+            with st.chat_message("assistant"):
+                manager = st.session_state.manager
 
-                with st.chat_message("assistant"):
-                    st.markdown(cached["response"])
+                status_placeholder = st.empty()
+                message_placeholder = st.empty()
 
-                    similarity = cached.get("similarity", 1.0)
-                    if similarity == 1.0:
-                        st.caption("💾 Cached response (exact match)")
-                    else:
-                        st.caption(
-                            f"💾 Cached response (similar query: {similarity:.0%})"
-                        )
+                with status_placeholder:
+                    with st.spinner("🔄 Processing..."):
+                        st.caption("🧠 Routing to agent...")
+                        st.caption("📊 Retrieving contexts...")
+                        st.caption("🔍 Running AutoMerging...")
 
-                    if st.session_state.show_tokens:
-                        st.caption(cached["token_info"])
+                        # FIX: Use non-streaming to avoid bug
+                        answer, contexts, meta = manager.route(prompt)
 
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": cached["response"],
-                    "token_info": cached["token_info"],
-                }
-            )
-            st.session_state.is_processing = False
-            st.rerun()
+                status_placeholder.empty()
+                
+                # FIX: Typing animation after response is ready
+                displayed = ""
+                for char in answer:
+                    displayed += char
+                    message_placeholder.markdown(displayed + "▌")
+                    time.sleep(0.003)
+                
+                message_placeholder.markdown(answer)
 
-        else:
-            with chat_container:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
+                # Show confidence
+                confidence = meta.get("confidence") if meta else None
+                if confidence and st.session_state.show_confidence:
+                    conf_icons = {"high": "🟢", "medium": "🟡", "low": "🟠", "uncertain": "🔴"}
+                    if confidence in conf_icons:
+                        st.caption(f"{conf_icons[confidence]} Confidence: {confidence}")
 
-                with st.chat_message("assistant"):
-                    manager = st.session_state.manager
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": answer,
+                        "confidence": confidence,
+                    }
+                )
 
-                    status_placeholder = st.empty()
-                    message_placeholder = st.empty()
-
-                    full_response = ""
-                    contexts = []
-                    stream_started = False
-
-                    with status_placeholder:
-                        with st.spinner("🔄 Processing..."):
-                            st.caption("🧠 Routing to agent...")
-                            st.caption("📊 Retrieving contexts...")
-                            st.caption("🔍 Running AutoMerging...")
-
-                            for delta, ctxs, is_final in manager.route_stream(prompt):
-                                if not is_final:
-                                    if not stream_started:
-                                        status_placeholder.empty()
-                                        stream_started = True
-
-                                    full_response += delta
-                                    message_placeholder.markdown(full_response + "▌")
-                                else:
-                                    full_response = delta
-                                    contexts = ctxs
-
-                    status_placeholder.empty()
-                    message_placeholder.markdown(full_response)
-
-                    if st.session_state.show_tokens:
-                        token_data = analyze_token_usage(
-                            query=prompt,
-                            answer=full_response,
-                            contexts=contexts,
-                            response_obj=None,
-                        )
-                        st.caption(format_token_report(token_data))
-
-                    token_data = analyze_token_usage(
-                        prompt, full_response, contexts, None
-                    )
-                    token_info = format_token_report(token_data)
-
-                    st.session_state.cache_agent.put(
-                        prompt, full_response, contexts, token_info
-                    )
-
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": full_response,
-                            "token_info": token_info,
-                        }
-                    )
-
-            st.session_state.is_processing = False
-            st.rerun()
+        st.session_state.is_processing = False
+        st.rerun()
 
 with col2:
-    st.markdown("**📊 Statistical Queries**")
+    st.markdown("**🔍 Deep Analysis**")
 
     for q in [
-        "What was the highest daily percentage increase?",
-        "What was the lowest daily percentage change?",
-        "Which day had the largest volume?",
+        "What can we infer about the company's future?",
+        "What are the main risks and their impact?",
+        "How does management view competitive position?",
     ]:
-        if st.button(q, key=f"stat_{q}", use_container_width=True):
+        if st.button(q, key=f"deep_{q}", use_container_width=True):
             st.session_state.pending_query = q
             st.rerun()
 
-    st.markdown("**📅 Date-Specific**")
+    st.markdown("**📊 Financial Health**")
 
     for q in [
-        "What happened on 2025-11-10?",
-        "Show me trading data for November 20",
-        "What was the close price on 2025-11-24?",
+        "Is the company financially healthy? Why?",
+        "What are the warning signs?",
+        "What does cash flow tell us?",
     ]:
-        if st.button(q, key=f"date_{q}", use_container_width=True):
+        if st.button(q, key=f"health_{q}", use_container_width=True):
             st.session_state.pending_query = q
             st.rerun()
 
-    st.markdown("**📈 Analytical**")
+    st.markdown("**🎯 Management & Strategy**")
 
     for q in [
-        "Compare first vs last week",
-        "How many [UP] days?",
-        "Average closing price?",
-        "7-day moving average",
-        "Summarize November trend",
+        "What is management's outlook?",
+        "What are the growth initiatives?",
+        "What assumptions is management making?",
     ]:
-        if st.button(q, key=f"anal_{q}", use_container_width=True):
+        if st.button(q, key=f"mgmt_{q}", use_container_width=True):
+            st.session_state.pending_query = q
+            st.rerun()
+
+    st.markdown("**📈 Specific Data**")
+
+    for q in [
+        "What was the total revenue?",
+        "What was the net income or loss?",
+        "How much cash does the company have?",
+        "What are the main risk factors?",
+        "How did revenue change YoY?",
+    ]:
+        if st.button(q, key=f"data_{q}", use_container_width=True):
             st.session_state.pending_query = q
             st.rerun()
 
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    st.session_state.show_tokens = st.checkbox(
-        "Show Token Usage", value=st.session_state.show_tokens
+    st.session_state.show_confidence = st.checkbox(
+        "Show Confidence Level", value=st.session_state.show_confidence
     )
 
     st.divider()
 
     if st.button("🔄 Clear Chat", use_container_width=True):
         st.session_state.messages = []
+        if hasattr(st.session_state.manager, 'clear_memory'):
+            st.session_state.manager.clear_memory()
         st.rerun()
 
     st.divider()
@@ -231,11 +195,5 @@ with st.sidebar:
     st.markdown("**📚 System Info**")
     st.caption("• Hierarchical Indexing")
     st.caption("• AutoMerging Retrieval")
-    st.caption("• MapReduce Summaries")
-
-    st.divider()
-
-    stats = st.session_state.cache_agent.get_stats()
-    st.caption(f"💾 Cached: {stats['total_cached']}/{stats['max_size']}")
-    st.caption(f"🎯 Threshold: {stats['similarity_threshold']:.0%}")
-    st.caption(f"🧠 Method: {stats['method']}")
+    st.caption("• Conversation Memory")
+    st.caption("• Human-in-the-Loop")

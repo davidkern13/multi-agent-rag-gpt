@@ -1,24 +1,40 @@
-# Core LlamaIndex
-llama-index
-llama-index-core
+# LangChain
+langchain
+langchain-core
+langchain-openai
+langchain-community
 
-# LLM & Embeddings
-llama-index-llms-ollama
-llama-index-embeddings-ollama
+# LlamaIndex
+llama-index
+llama-index-llms-openai
+llama-index-embeddings-openai
+llama-index-readers-file
+llama-index-vector-stores-chroma
 
 # Vector Store
-llama-index-vector-stores-chroma
 chromadb
 
-# Document Loading
-llama-index-readers-file
-pymupdf
+# PDF
+pypdf
+pdfplumber
 
-# Evaluation with Ragas
-ragas
-datasets
-langchain-community 
+# Data
+pandas
+numpy
 
-# Utilities
-python-dateutil 
-pandas  
+# Tokens
+tiktoken
+
+# HTTP
+httpx
+requests
+
+# OpenAI
+openai
+
+# Utils
+python-dotenv
+python-dateutil
+
+# UI
+streamlit

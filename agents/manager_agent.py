@@ -1,154 +1,282 @@
+"""
+Manager Agent - With Memory, HITL, and MCP
+
+- LangChain agents with routing
+- Conversation memory
+- Human-in-the-loop
+- MCP financial tools integration
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from langchain.agents import create_agent
+from langchain.tools import tool
+from typing import Tuple, List, Optional, Generator, Dict
+from agents.conversation_memory import ConversationMemory
+from agents.hitl import HITLManager, QuestionComplexity, ConfidenceLevel
+
+
 class ManagerAgent:
-    def __init__(self, needle_agent, summary_agent, llm, mcp):
+    """
+    Intelligent Query Router with Memory, HITL, and MCP using LangChain agents.
+    """
+    
+    def __init__(self, needle_agent, summary_agent, llm, mcp=None, debug=False):
         self.needle_agent = needle_agent
         self.summary_agent = summary_agent
         self.llm = llm
-        self.mcp = mcp
+        self.mcp = mcp  # Financial MCP tools
+        self.debug = debug
+        
+        self._last_contexts = []
+        
+        # Memory and HITL
+        self.memory = ConversationMemory(max_messages=10)
+        self.hitl = HITLManager(llm=llm)
+        
+        # Create tools and agent
+        self.tools = self._create_tools()
+        self.agent = self._create_agent()
+    
+    def _create_tools(self):
+        """Create routing tools for the agent."""
+        
+        @tool
+        def search_specific_data(query: str) -> str:
+            """
+            Search for specific financial data in the SEC filing.
+            Use this for: exact numbers, dates, financial metrics, specific facts.
+            Examples: revenue amounts, dates, ratios, comparisons, specific sections.
+            
+            Args:
+                query: The specific information to find
+                
+            Returns:
+                Detailed financial data with exact figures
+            """
+            if self.debug:
+                print(f"[Manager→Needle] {query}")
+            
+            # Route to needle agent
+            answer, contexts, _ = self.needle_agent.answer(query)
+            self._last_contexts = contexts
+            
+            # Apply MCP analysis if available and relevant
+            if self.mcp and contexts:
+                mcp_output = self.mcp.run(query, contexts)
+                if mcp_output:
+                    answer = answer + "\n\n" + mcp_output
+            
+            return answer
+        
+        @tool
+        def get_executive_analysis(topic: str) -> str:
+            """
+            Get high-level executive analysis and strategic insights.
+            Use this for: summaries, financial health assessment, strategic analysis, recommendations.
+            Examples: "overall financial health", "key risks", "management outlook", "strategic position".
+            
+            Args:
+                topic: The aspect to analyze at executive level
+                
+            Returns:
+                Executive-level analysis and strategic insights
+            """
+            if self.debug:
+                print(f"[Manager→Summary] {topic}")
+            
+            # Route to summary agent
+            answer = self.summary_agent.answer(topic)
+            
+            return answer
+        
+        @tool
+        def respond_without_tools() -> str:
+            """
+            Respond directly without using any data retrieval tools.
+            Use this ONLY for: greetings, general questions about capabilities, 
+            declining inappropriate requests (investment advice, buy/sell recommendations).
+            
+            DO NOT use this for questions about the SEC filing - always use search tools for that.
+            
+            Returns:
+                A direct response without data retrieval
+            """
+            # This tool is just a placeholder - the agent will provide the response
+            return "RESPOND_DIRECTLY"
+        
+        return [search_specific_data, get_executive_analysis, respond_without_tools]
+    
+    def _create_agent(self):
+        """Create LangChain routing agent."""
+        
+        system_prompt = """You are an Intelligent Financial Analysis Manager coordinating specialized agents.
 
-    def is_relevant_query(self, query: str) -> tuple:
-        """
-        Use LLM to check if query is relevant to trading data.
-        Returns: (is_relevant, response_message)
-        """
-        prompt = f"""You are a filter for a PLTR stock trading data Q&A system (November 2025).
+YOUR ROLE:
+- Route queries to the appropriate tool based on the question type
+- Integrate information from multiple tools when needed
+- Provide clear, well-structured answers
+- Maintain conversation context
 
-RELEVANT queries include:
-- Price questions (open, close, high, low, ranges)
-- Percentage changes and trends
-- Volume questions
-- Date-specific queries (what happened on X date)
-- Comparisons (first week vs last week, highest vs lowest)
-- Statistics (average, maximum, minimum)
-- Technical analysis (moving averages, trends)
-- ANY question about November 2025 PLTR trading data
+AVAILABLE TOOLS:
 
-IRRELEVANT queries (respond with disclaimer):
-- Investment advice or recommendations ("should I buy/sell?", "is it a good investment?")
-- Future price predictions or forecasts ("will the price go up?", "what will happen next?")
-- Financial planning or portfolio advice
-- Risk assessment or recommendations
-- Questions about other stocks
-- Questions about other time periods (not November 2025)
-- General questions unrelated to stock data
+1. **search_specific_data**
+   - Use for: Specific numbers, dates, facts, comparisons, metrics from SEC filing
+   - Examples: "What was the revenue?", "When was the report filed?", "What is the debt level?"
+   
+2. **get_executive_analysis**
+   - Use for: High-level summaries, strategic analysis, assessments, recommendations
+   - Examples: "Is the company healthy?", "What are the main risks?", "Give me an overview"
 
-Query: "{query}"
+3. **respond_without_tools**
+   - Use ONLY for: Greetings, capability questions, declining inappropriate requests
+   - DO NOT use for any questions about actual SEC filing data
 
-Rules:
-1. If it's a greeting (hi, hello, hey) → respond with "GREETING: [friendly response inviting them to ask about PLTR November 2025 data]"
+ROUTING STRATEGY:
 
-2. If it asks for INVESTMENT ADVICE or FUTURE PREDICTIONS → respond "ADVICE: I can only analyze historical November 2025 PLTR trading data. I cannot provide investment advice, predict future prices, or make financial recommendations. I'm designed for educational analysis of past data only, not as a financial advisor or investment tool."
+**Greetings** (hello, hi, hey) → respond_without_tools:
+- Welcome the user warmly
+- Explain you're an AI financial analyst for SEC filings
+- List what you can help with: data extraction, strategic analysis, insights
+- Ask what they'd like to analyze
 
-3. If it asks ANYTHING about PLTR November 2025 trading (prices, dates, comparisons, stats) → respond "RELEVANT"
+**Investment advice** (should I buy, should I sell, price target) → respond_without_tools:
+- Politely decline: "I cannot provide buy/sell recommendations"
+- Redirect: "I CAN help you understand financials, risks, trends, management outlook"
+- Ask what analytical aspect they'd like to explore
 
-4. If it's completely unrelated → respond "IRRELEVANT: [explain you only handle PLTR November 2025 trading data analysis]"
+**Capability questions** (what can you do, how do you work) → respond_without_tools:
+- Explain your capabilities clearly
+- Give examples of questions you can answer
+- Offer to help with specific analysis
 
-BE GENEROUS with historical data questions - if there's ANY connection to analyzing past trading data, mark it RELEVANT.
-BE STRICT with advice/predictions - always decline and explain limitations clearly.
+**SEC filing questions** → ALWAYS use search_specific_data or get_executive_analysis:
+- "What was X?" → search_specific_data
+- "How is the company doing?" → get_executive_analysis  
+- "What changed from last quarter?" → search_specific_data
+- Never respond without tools for filing data
 
-Response:"""
+**Complex questions** → Use multiple tools:
+- Get specific data first: search_specific_data
+- Then strategic context: get_executive_analysis
 
+RESPONSE GUIDELINES:
+
+1. **For filing questions**: MUST use search tools - never guess
+2. **For greetings/declines**: Use respond_without_tools and be helpful
+3. **Be specific**: Include exact numbers and dates
+4. **Structure clearly**: Use headers and bullet points appropriately
+5. **Be honest**: If info is missing, say so
+
+CRITICAL RULES:
+- NEVER answer factual questions about SEC filing without using search tools
+- For greetings/inappropriate requests: use respond_without_tools
+- Always provide value - redirect when declining
+- If uncertain, prefer search_specific_data for data questions"""
+
+        # Create agent
+        agent = create_agent(
+            model=self.llm,
+            tools=self.tools,
+            system_prompt=system_prompt,
+        )
+        
+        return agent
+    
+    def route(self, query: str) -> Tuple[str, List[str], Optional[dict]]:
+        """Route query with memory, HITL, and MCP support."""
+        self._last_contexts = []
+        
+        # Add to memory
+        self.memory.add_message("user", query)
+        
+        # Assess question
+        assessment = self.hitl.assess_question(query)
+        
+        # Check if clarification needed
+        if assessment.needs_clarification:
+            clarification = self.hitl.get_clarification_request(assessment, query)
+            if clarification:
+                response = f"🤔 **Clarification needed:**\n\n{clarification.message}"
+                self.memory.add_message("assistant", response, {"type": "clarification"})
+                return response, [], {"needs_clarification": True}
+        
+        # Enrich follow-up queries with context
+        enriched_query = self.memory.enrich_query(query)
+        if enriched_query != query and self.debug:
+            print(f"[Manager] Enriched: '{query}' → '{enriched_query}'")
+        
+        # Build contextual prompt
+        context_summary = self.memory.get_context_summary()
+        if context_summary:
+            contextual_query = f"""CONVERSATION CONTEXT:
+{context_summary}
+
+CURRENT QUESTION: {enriched_query}
+
+Use the conversation context to better understand the question."""
+        else:
+            contextual_query = enriched_query
+        
+        # Invoke agent
         try:
-            response = self.llm.complete(prompt).text.strip()
-
-            if response.startswith("RELEVANT"):
-                return True, None
-
-            elif response.startswith("GREETING:"):
-                message = response.replace("GREETING:", "").strip()
-                return False, message
-
-            elif response.startswith("ADVICE:"):
-                message = response.replace("ADVICE:", "").strip()
-                return False, message
-
-            elif response.startswith("IRRELEVANT:"):
-                message = response.replace("IRRELEVANT:", "").strip()
-                return False, message
-
+            if self.debug:
+                print(f"[Manager] Invoking agent with query: {query}")
+            
+            result = self.agent.invoke({
+                "messages": [{"role": "user", "content": contextual_query}]
+            })
+            
+            # Extract answer from messages
+            messages = result.get("messages", [])
+            if messages:
+                last_msg = messages[-1]
+                answer = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
             else:
-                # Default to allowing the query if response format is unexpected
-                return True, None
-
+                answer = "No response generated."
+            
+            # Assess confidence
+            confidence = self.hitl.assess_answer_confidence(query, answer, self._last_contexts)
+            
+            # Add confidence indicator for complex questions
+            if assessment.complexity == QuestionComplexity.COMPLEX:
+                confidence_note = self.hitl.format_confidence_indicator(confidence)
+                if confidence_note:
+                    answer += f"\n\n---\n*{confidence_note}*"
+            
+            # Save to memory
+            self.memory.add_message("assistant", answer)
+            
+            return answer, self._last_contexts, {"confidence": confidence.value}
+            
         except Exception as e:
-            # If LLM fails, allow the query
-            print(f"[WARN] Relevance check failed: {e}")
-            return True, None
+            if self.debug:
+                print(f"[Manager] Error: {e}")
+            error_msg = f"Error processing query: {str(e)}"
+            return error_msg, [], None
 
-    def classify_intent(self, query: str) -> str:
-        """
-        Classify query intent:
-        - 'summary': High-level overview questions
-        - 'needle': Specific factual questions (default)
-        """
-        q = query.lower()
-
-        summary_keywords = [
-            "overview",
-            "summarize",
-            "summary",
-            "high-level",
-            "main topics",
-            "general",
-            "trend",
-            "overall",
-            "broad",
-            "big picture",
-            "in general",
-            "tell me about",
-        ]
-
-        if any(k in q for k in summary_keywords):
-            print(f"[Manager] Matched keyword for SUMMARY")
-            return "summary"
-
-        print(f"[Manager] No keyword match, defaulting to NEEDLE")
-        return "needle"
-
-    def route(self, query: str):
-        is_relevant, message = self.is_relevant_query(query)
-
-        if not is_relevant:
-            return message, [], None
-
-        intent = self.classify_intent(query)
-
-        if intent == "summary":
-            answer = self.summary_agent.answer(query)
-            return answer, [], None
-
-        answer, contexts, response_obj = self.needle_agent.answer(query)
-
-        if self.mcp:
-            extra = self.mcp.run(query, contexts)
-            if extra:
-                answer += f"\n\n{extra}"
-
-        return answer, contexts, response_obj
-
-    def route_stream(self, query: str):
-        """
-        Route query to appropriate agent with streaming response.
-        Yields: (text_chunk, contexts, is_final)
-        """
-        # Check query relevance first
-        is_relevant, response_message = self.is_relevant_query(query)
-
-        if not is_relevant:
-            # Return the custom response message
-            yield response_message, [], False
-            yield response_message, [], True
-            return
-
-        # Classify intent
-        intent = self.classify_intent(query)
-
-        if intent == "summary":
-            print(f"[Manager] Routing to SummaryAgent")
-            for chunk, is_final in self.summary_agent.answer_stream(query):
-                yield chunk, [], is_final
-            return
-
-        # Default: Needle agent
-        print(f"[Manager] Routing to NeedleAgent")
-        for chunk, contexts, is_final in self.needle_agent.answer_stream(query):
-            yield chunk, contexts, is_final
+    def route_stream(self, query: str) -> Generator[Tuple[str, List[str], bool], None, None]:
+        """Route with streaming."""
+        # Get full answer
+        answer, contexts, meta = self.route(query)
+        
+        # Stream character by character
+        for char in answer:
+            yield char, [], False
+        
+        # Final yield with contexts
+        yield "", contexts, True
+    
+    def get_memory_context(self) -> str:
+        """Get current memory context."""
+        return self.memory.get_context_summary()
+    
+    def clear_memory(self):
+        """Clear conversation memory."""
+        self.memory.clear()
+    
+    def record_feedback(self, query: str, answer: str, feedback: str, rating: int = None):
+        """Record user feedback."""
+        self.hitl.record_feedback(query, answer, feedback, rating)
