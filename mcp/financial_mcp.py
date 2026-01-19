@@ -12,7 +12,6 @@ import re
 from mcp.financial_tools import (
     extract_dollar_amounts,
     extract_percentages,
-    extract_fiscal_periods,
     analyze_profitability,
     extract_risk_keywords,
     analyze_financial_health,

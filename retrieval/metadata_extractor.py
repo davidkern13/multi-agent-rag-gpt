@@ -36,6 +36,7 @@ def extract_entities_from_text(text: str, top_n: int = 10):
 
     # Financial terms
     financial_terms = [
+        # Current terms
         "revenue", "profit", "loss", "earnings", "guidance", "forecast",
         "quarter", "annual", "shares", "stock", "dividend", "market",
         "assets", "liabilities", "equity", "cash", "debt", "margin",
@@ -44,6 +45,14 @@ def extract_entities_from_text(text: str, top_n: int = 10):
         "contract", "customer", "acquisition", "restructuring",
         "impairment", "depreciation", "amortization", "goodwill",
         "risk", "compliance", "regulatory", "sec", "filing",
+        
+        # Added terms
+        "ebit", "roi", "roe", "capex", "fcf", "leverage", "liquidity",
+        "receivables", "payables", "inventory", "intangible", "deferred",
+        "disclosure", "audit", "material", "restatement", "amendment",
+        "board", "director", "executive", "compensation", "shareholder",
+        "growth", "yoy", "qoq", "outlook", "estimate",
+        "litigation", "contingency", "covenant", "settlement",
     ]
 
     found_terms = [term for term in financial_terms if term.lower() in text.lower()]
@@ -51,10 +60,20 @@ def extract_entities_from_text(text: str, top_n: int = 10):
     all_entities = stock_tickers + capitalized + found_terms
 
     stopwords = {
-        "The", "This", "That", "With", "From", "Were", "Have", "More",
-        "Been", "Their", "About", "Other", "These", "Which", "Would",
-        "Could", "Should", "Company", "December", "January", "February",
-    }
+    # Common words
+    "The", "This", "That", "With", "From", "Were", "Have", "More",
+    "Been", "Their", "About", "Other", "These", "Which", "Would",
+    "Could", "Should", "For", "And", "But", "Not", "Are", "Was",
+    "Will", "Its", "Our", "Any", "All", "Each", "Such", "Into",
+    
+    # All months
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+    
+    # SEC document terms
+    "Company", "Annual", "Report", "Quarter", "Year", "Period",
+    "Total", "Pursuant", "Section", "Item", "Form", "Statement",
+    }   
     filtered = [e for e in all_entities if e not in stopwords and len(e) > 1]
 
     counter = Counter(filtered)
