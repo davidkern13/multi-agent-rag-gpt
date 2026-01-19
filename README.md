@@ -286,13 +286,6 @@ python human_grader.py
 | "Give me an executive summary" | Summary | Comprehensive overview |
 | "What is the management outlook?" | Summary | Forward-looking analysis |
 
-## ⚠️ Limitations
-
-- **Single Filing**: Analyzes one SEC filing at a time
-- **No Real-Time Data**: Based on filed documents only
-- **No Investment Advice**: Cannot provide buy/sell recommendations
-- **English Only**: Optimized for English SEC filings
-
 ## 🔬 Technologies
 
 | Category | Technology |
@@ -305,36 +298,11 @@ python human_grader.py
 | **UI** | Streamlit |
 | **PDF** | pypdf, pdfplumber |
 
-## 📊 Sample Output
-
-**Query**: "What was the total revenue and how did it change?"
-
-**Response**:
-```
-**Total Revenue**
-
-BigBear.ai reported total revenue of $155.2 million for the fiscal year 
-ended December 31, 2024.
-
-**Key Figures:**
-• Total Revenue: $155.2 million (FY 2024)
-• Prior Year Revenue: $146.1 million (FY 2023)
-• Change: +$9.1 million (+6.2% YoY)
-
-**Analysis:**
-The revenue increase was primarily driven by growth in the Analytics 
-segment, particularly from new government contracts awarded in Q2 2024.
-The Cyber & Engineering segment showed stable performance.
-
-**Important Notes:**
-- Revenue recognition follows ASC 606
-- Includes both product and service revenue
-- Government contracts represent ~70% of total revenue
-```
-
 ---
 
 **Author**: David Kern  
 **Course**: GenAI + Agents  
-**Date**: January 2025  
-**Corpus**: BigBear.ai 10-K Filing (2024)
+**Date**: January 2026
+
+**Disclaimer:** This project is for academic and educational purposes only and does not constitute financial or investment advice. 
+
